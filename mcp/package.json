@@ -11,6 +11,7 @@
     "@types/node": "^22.20.2"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node test/smoke.test.js"
   }
 }

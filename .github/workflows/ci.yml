@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: ["main", "fix/*", "feat/*"]
   pull_request:
 
 jobs:
@@ -15,8 +16,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Python syntax check (blender)
-        run: python -m py_compile $(find blender examples -name '*.py' 2>/dev/null)
-      - name: Node build/test (if present)
+
+      - name: Python syntax check (all modules)
+        run: python -m py_compile $(find . -name '*.py' -not -path '*/.*' -not -path './mcp/node_modules/*' 2>/dev/null)
+
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Validate example scene spec
+        run: python spec/validate.py examples/brain/SCENE_SPEC.md
+
+      - name: Verify deterministic web build
         run: |
-          if [ -f package.json ]; then npm install --no-audit --no-fund && npm test; else echo "no package.json, skipping"; fi
+          python web/build_web.py web/presets/brain.json web/template.html out_ci.html
+          diff -u web/examples/brain-v2.html out_ci.html
+
+      - name: Node MCP build & test
+        run: |
+          cd mcp
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm run build
+          npm test

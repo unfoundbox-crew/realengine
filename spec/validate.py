@@ -32,7 +32,8 @@ def section(text, start_pat):
 
 def main(path):
     try:
-        text = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
     except OSError as e:
         print(f"FAIL: cannot read {path}: {e}")
         return 1
@@ -71,4 +72,7 @@ def main(path):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        sys.exit(0)
     sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "SCENE_SPEC.md"))

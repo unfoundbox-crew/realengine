@@ -18,16 +18,15 @@ Stdlib only.
 """
 
 import os
+import shutil
 import struct
 import subprocess
 
-# zero-vision ships bins named zrv / zrv-mcp / snap (package `zero-vision`
-# has no bare executable, so `npx -y zero-vision ocr ...` fails with
-# "could not determine executable to run"). Override with ZERO_VISION_CMD
-# as a colon-separated argv, e.g. "zrv:ocr" for a local install.
-# NOTE: the default OCR engine ("native") has no macOS arm64 binary, so we
-# pin --engine tesseract, which works everywhere tesseract.js runs.
-OCR_CMD = os.environ.get("ZERO_VISION_CMD", "npx:-y:-p:zero-vision:zrv:ocr").split(":")
+# zero-vision ships bins named zrv / zrv-mcp / snap.
+# Prefer local `zrv ocr` if present in PATH to avoid network roundtrips.
+# Override with ZERO_VISION_CMD as a colon-separated argv, e.g. "zrv:ocr".
+_default_cmd = "zrv:ocr" if shutil.which("zrv") else "npx:-y:-p:zero-vision:zrv:ocr"
+OCR_CMD = os.environ.get("ZERO_VISION_CMD", _default_cmd).split(":")
 OCR_ENGINE = os.environ.get("ZERO_VISION_ENGINE", "tesseract")
 
 

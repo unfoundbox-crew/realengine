@@ -37,6 +37,9 @@ def fail(msg):
 
 
 def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        sys.exit(0)
     if len(argv) != 4:
         print(__doc__, file=sys.stderr)
         sys.exit(2)
