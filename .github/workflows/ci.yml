@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax check (blender)
+        run: python -m py_compile $(find blender examples -name '*.py' 2>/dev/null)
+      - name: Node build/test (if present)
+        run: |
+          if [ -f package.json ]; then npm install --no-audit --no-fund && npm test; else echo "no package.json, skipping"; fi

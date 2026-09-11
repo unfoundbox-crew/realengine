@@ -1,0 +1,16 @@
+{
+  "name": "code-to-3d-mcp",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Tiny MCP surface for code-to-3d (~6 verbs). Wave 1 sketch: all handlers fail closed.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2"
+  },
+  "scripts": {
+    "build": "tsc"
+  }
+}

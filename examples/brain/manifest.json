@@ -1,0 +1,14 @@
+{
+  "version": "0.1",
+  "target": "Blender MCP / Terra-low",
+  "authoritative_file": "SCENE_SPEC.md",
+  "references": [
+    "01_master_front.png",
+    "02_left_orthographic.png",
+    "03_top_orthographic.png",
+    "04_detail_3q.png",
+    "05_exploded_layers.png",
+    "06_materials_dimensions.png"
+  ],
+  "task_file": "TASK.md"
+}

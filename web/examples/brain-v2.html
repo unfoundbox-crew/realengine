@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Human Brain — Predictive-Control System (3D Reference v2)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Theme: Academic Clean White (Default per SCENE_SPEC.md) */
+      --bg: #f8fafc;
+      --surface: rgba(255, 255, 255, 0.90);
+      --surface-border: rgba(15, 23, 42, 0.08);
+      --surface-border-active: rgba(15, 23, 42, 0.28);
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --text-dim: #94a3b8;
+      --accent: #2563eb;
+      --accent-bg: rgba(37, 99, 235, 0.08);
+      --shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+      --hud-panel-bg: rgba(255, 255, 255, 0.92);
+      
+      /* Specific Anatomical Palette from SCENE_SPEC.md */
+      --ctx-frontal: #7EA6FF;
+      --ctx-parietal: #82D6A4;
+      --ctx-temporal: #F0C96C;
+      --ctx-occipital: #A989D8;
+      --sub-thalamus: #2DD4BF;
+      --sub-hippocampus: #14B8A6;
+      --sub-amygdala: #10B981;
+      --sub-basalganglia: #FB7185;
+      --sub-cerebellum: #FB923C;
+      --sub-brainstem: #94A3B8;
+      --sub-acc: #F43F5E;
+    }
+
+    body.dark-mode {
+      --bg: #09090b;
+      --surface: rgba(17, 17, 20, 0.88);
+      --surface-border: rgba(255, 255, 255, 0.10);
+      --surface-border-active: rgba(255, 255, 255, 0.32);
+      --text: #fafafa;
+      --text-muted: #a1a1aa;
+      --text-dim: #52525b;
+      --accent: #38bdf8;
+      --accent-bg: rgba(56, 189, 248, 0.12);
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+      --hud-panel-bg: rgba(17, 17, 20, 0.90);
+    }
+
+    body.blueprint-mode {
+      --bg: #06101e;
+      --surface: rgba(10, 25, 47, 0.88);
+      --surface-border: rgba(56, 189, 248, 0.22);
+      --surface-border-active: rgba(56, 189, 248, 0.60);
+      --text: #f0f9ff;
+      --text-muted: #7dd3fc;
+      --text-dim: #38bdf8;
+      --accent: #0284c7;
+      --accent-bg: rgba(2, 132, 199, 0.20);
+      --shadow: 0 16px 40px rgba(0, 10, 30, 0.85);
+      --hud-panel-bg: rgba(10, 25, 47, 0.92);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg);
+      font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      transition: background 0.3s ease, color 0.3s ease;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    #canvas-host {
+      position: fixed; inset: 0;
+      touch-action: none;
+    }
+
+    /* v2: subtle vignette for depth (pure CSS, zero GPU cost) */
+    #vignette {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+      background: radial-gradient(ellipse at center, transparent 62%, rgba(15, 23, 42, 0.10) 100%);
+    }
+    body.dark-mode #vignette, body.blueprint-mode #vignette {
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
+    }
+
+    /* v2: loader + WebGL-fail overlays */
+    #loader {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg); color: var(--text-muted);
+      font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.1em;
+      transition: opacity 0.4s ease;
+    }
+    #loader.done { opacity: 0; pointer-events: none; }
+    #gl-fail {
+      position: fixed; inset: 0; z-index: 60; display: none;
+      align-items: center; justify-content: center; text-align: center;
+      background: #f8fafc; color: #0f172a; font-size: 14px; line-height: 1.6; padding: 24px;
+    }
+    canvas {
+      display: block; width: 100%; height: 100%;
+      touch-action: none;
+    }
+
+    /* Top HUD / Header */
+    .hud {
+      position: fixed; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: 20px 24px;
+    }
+
+    .hud-top {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
+      pointer-events: none;
+    }
+
+    .header-card {
+      pointer-events: auto;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 14px;
+      padding: 16px 20px;
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      max-width: 440px;
+      transition: all 0.25s ease;
+    }
+
+    .header-card .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--accent);
+      background: var(--accent-bg);
+      border: 1px solid var(--surface-border);
+      padding: 3px 8px; border-radius: 6px; margin-bottom: 8px;
+    }
+
+    .header-card .badge::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%;
+      background: currentColor; display: inline-block;
+    }
+
+    .header-card h1 {
+      font-size: 16px; font-weight: 800; letter-spacing: -0.02em;
+      line-height: 1.25; margin-bottom: 6px;
+    }
+
+    .header-card p {
+      font-size: 12px; color: var(--text-muted); line-height: 1.5;
+    }
+
+    .loop-strip {
+      margin-top: 10px; padding-top: 10px;
+      border-top: 1px dashed var(--surface-border);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px; color: var(--text-dim);
+      display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center;
+      line-height: 1.4;
+    }
+    .loop-strip .step {
+      font-weight: 600; color: var(--text-muted);
+    }
+    .loop-strip .arrow { color: var(--accent); }
+
+    /* Top Right Inspector / HUD */
+    .inspector-card {
+      pointer-events: auto;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 14px;
+      padding: 16px 20px;
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      width: 330px;
+      transition: all 0.25s ease;
+    }
+
+    .inspector-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .inspector-title {
+      font-size: 13px; font-weight: 700;
+    }
+
+    .inspector-code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; color: var(--text-dim);
+      background: var(--surface-border);
+      padding: 2px 6px; border-radius: 4px;
+    }
+
+    .inspector-desc {
+      font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-bottom: 8px;
+    }
+
+    .inspector-role {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--accent-bg); padding: 6px 10px; border-radius: 6px;
+      border-left: 3px solid var(--accent); line-height: 1.4;
+    }
+
+    /* Bottom Control Bar */
+    .hud-panel {
+      pointer-events: auto;
+      align-self: center;
+      width: min(1040px, 100%);
+      background: var(--hud-panel-bg);
+      border: 1px solid var(--surface-border);
+      border-radius: 16px;
+      padding: 14px 18px 12px;
+      backdrop-filter: blur(16px);
+      box-shadow: var(--shadow);
+      display: flex; flex-direction: column; gap: 10px;
+      transition: all 0.25s ease;
+    }
+
+    .panel-row {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+
+    .panel-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-dim);
+      min-width: 76px;
+    }
+
+    .btn-group {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1;
+    }
+
+    .btn {
+      pointer-events: auto;
+      border: 1px solid var(--surface-border);
+      background: var(--surface);
+      color: var(--text);
+      font: inherit; font-size: 11.5px; font-weight: 600;
+      padding: 6px 12px; border-radius: 8px;
+      cursor: pointer; transition: all 0.15s ease;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+
+    .btn:hover {
+      border-color: var(--surface-border-active);
+      background: var(--accent-bg);
+    }
+
+    .btn.active {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .btn .dot {
+      width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+    }
+
+    .slider-container {
+      display: flex; align-items: center; gap: 10px; flex: 1; min-width: 200px;
+    }
+
+    .slider-container label {
+      font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap;
+    }
+
+    .slider-container input[type="range"] {
+      flex: 1; accent-color: var(--accent); height: 4px; cursor: pointer;
+    }
+
+    .slider-container .val {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px; color: var(--accent); font-weight: 600; min-width: 36px; text-align: right;
+    }
+
+    /* Floating Academic Spec Tags */
+    .spec-legend {
+      position: fixed; left: 24px; bottom: 130px;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow);
+      font-size: 11px; pointer-events: auto;
+      max-width: 250px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+
+    .spec-legend-title {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-dim); margin-bottom: 2px;
+    }
+
+    .spec-legend-item {
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+    }
+
+    .color-swatch {
+      width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0;
+    }
+
+    /* Reference Views Toast */
+    .cam-toast {
+      position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px; font-weight: 600;
+      padding: 6px 14px; border-radius: 999px;
+      box-shadow: var(--shadow);
+      pointer-events: none; opacity: 0; transition: opacity 0.25s ease;
+      z-index: 20;
+    }
+    .cam-toast.visible { opacity: 1; }
+
+    @media (max-width: 900px) {
+      .hud { padding: 12px; }
+      .header-card { max-width: 100%; }
+      /* v2: inspector stays available as a compact strip instead of vanishing */
+      .inspector-card { display: block; width: 100%; padding: 10px 14px; }
+      .inspector-desc { display: none; }
+      .spec-legend { display: none; }
+      .hud-panel { width: 100%; padding: 10px; }
+      .panel-row { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-host"></div>
+  <div id="vignette"></div>
+  <div id="loader">PREPARING SCENE…</div>
+  <div id="gl-fail"><div>This 3D reference needs WebGL.<br />Please open it in a browser with hardware acceleration enabled.</div></div>
+
+  <div class="cam-toast" id="cam-toast">CAM_Master: 3/4 Overview</div>
+
+  <div class="hud">
+    <!-- Top Row -->
+    <div class="hud-top">
+      <div class="header-card">
+        <span class="badge">Blender Reference · SCENE_SPEC v0.1</span>
+        <h1>Human Brain — Predictive-Control System</h1>
+        <p>A closed-loop neuro-cybernetic architecture: layered hierarchical inference, world model simulation, and motor prediction correction.</p>
+        <div class="loop-strip">
+          <span class="step">Perceive</span> <span class="arrow">→</span>
+          <span class="step">Encode</span> <span class="arrow">→</span>
+          <span class="step">Predict</span> <span class="arrow">→</span>
+          <span class="step">Compare</span> <span class="arrow">→</span>
+          <span class="step">Update</span> <span class="arrow">→</span>
+          <span class="step">Plan</span> <span class="arrow">→</span>
+          <span class="step">Act</span> <span class="arrow">↺</span>
+        </div>
+      </div>
+
+      <div class="inspector-card" id="inspector-card">
+        <div class="inspector-header">
+          <span class="inspector-title" id="insp-name">Frontal Cortex</span>
+          <span class="inspector-code" id="insp-code">CTX_Frontal</span>
+        </div>
+        <div class="inspector-desc" id="insp-desc">Planning, decision making, abstraction, and executive goal management. Generates top-down behavioral policies and priors.</div>
+        <div class="inspector-role" id="insp-role">Predictive Role: Goal State Formulation &amp; Counterfactual Planning</div>
+      </div>
+    </div>
+
+    <!-- Floating Spec Legend (Left) -->
+    <div class="spec-legend">
+      <div class="spec-legend-title">Canonical Anatomy Palette</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#7EA6FF"></span> Frontal Lobe (#7EA6FF)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#82D6A4"></span> Parietal Lobe (#82D6A4)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#F0C96C"></span> Temporal Lobe (#F0C96C)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#A989D8"></span> Occipital Lobe (#A989D8)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#2DD4BF"></span> Thalamus Relay (#2DD4BF)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#14B8A6"></span> Hippocampus (#14B8A6)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#10B981"></span> Amygdala (#10B981)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#FB7185"></span> Basal Ganglia (#FB7185)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#FB923C"></span> Cerebellum (#FB923C)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#94A3B8"></span> Brainstem (#94A3B8)</div>
+      <div class="spec-legend-item"><span class="color-swatch" style="background:#F43F5E"></span> ACC (#F43F5E)</div>
+    </div>
+
+    <!-- Bottom Control Dock -->
+    <div class="hud-panel">
+      <!-- 6 Reference Cameras -->
+      <div class="panel-row">
+        <span class="panel-label">6 Views</span>
+        <div class="btn-group">
+          <button class="btn cam-btn active" data-cam="master">01 Master (3/4 Overview)</button>
+          <button class="btn cam-btn" data-cam="left">02 Left Orthographic</button>
+          <button class="btn cam-btn" data-cam="front">03 Front Orthographic</button>
+          <button class="btn cam-btn" data-cam="top">04 Top Orthographic</button>
+          <button class="btn cam-btn" data-cam="exploded">05 Exploded Layers</button>
+          <button class="btn cam-btn" data-cam="detail">06 Subcortical Detail</button>
+        </div>
+      </div>
+
+      <!-- Exploded Slider & Toggles -->
+      <div class="panel-row">
+        <span class="panel-label">Exploded</span>
+        <div class="slider-container">
+          <label for="explode-slider">Radial Disassembly</label>
+          <input type="range" id="explode-slider" min="0" max="1" step="0.01" value="0.0" />
+          <span class="val" id="explode-val">0%</span>
+        </div>
+        <button class="btn" id="toggle-turntable" aria-pressed="false">Turntable: OFF</button>
+        <button class="btn active" id="toggle-pulse" aria-pressed="true">Signal Pulse: ON</button>
+        <button class="btn active" id="toggle-labels" aria-pressed="true">Labels: ON</button>
+        <button class="btn" id="snapshot-png" title="Save current view as PNG (keys 1-6 switch views)">Snapshot PNG</button>
+      </div>
+
+      <!-- Visual Elements & Theme -->
+      <div class="panel-row">
+        <span class="panel-label">Layers</span>
+        <div class="btn-group">
+          <button class="btn active" id="toggle-head" aria-pressed="true"><span class="dot" style="background:#E8EEF3; border:1px solid #94a3b8"></span> Head Shell</button>
+          <button class="btn active" id="toggle-cortex" aria-pressed="true"><span class="dot" style="background:#7EA6FF"></span> Cortex Lobes</button>
+          <button class="btn active" id="toggle-subcortical" aria-pressed="true"><span class="dot" style="background:#2DD4BF"></span> Subcortical Core</button>
+          <button class="btn active" id="toggle-stack" aria-pressed="true"><span class="dot" style="background:#A989D8"></span> 5-Layer Stack</button>
+          <button class="btn active" id="toggle-loop" aria-pressed="true"><span class="dot" style="background:#2563eb"></span> Control Loop</button>
+        </div>
+        <div class="btn-group" style="margin-left: auto;">
+          <button class="btn theme-btn active" data-theme="white">Academic White</button>
+          <button class="btn theme-btn" data-theme="dark">Obsidian Dark</button>
+          <button class="btn theme-btn" data-theme="blueprint">Blueprint</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 1. SPECIFICATION CONSTANTS & DIMENSIONS (SCENE_SPEC.md §Units and coordinates)
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Brain envelope: 0.150 × 0.175 × 0.135 m (W × D × H)
+    // Head envelope:  0.175 × 0.215 × 0.240 m
+    // Metric: 1 Three.js unit = 1 meter
+    const BRAIN_W = 0.150; // Lateral (X)
+    const BRAIN_D = 0.175; // Anterior-Posterior (Z)
+    const BRAIN_H = 0.135; // Superior-Inferior (Y)
+
+    const HEAD_W = 0.175;
+    const HEAD_D = 0.215;
+    const HEAD_H = 0.240;
+
+    // Palette per SCENE_SPEC.md §Cortical regions & §Subcortical structures
+    const PALETTE = {
+      HEAD: 0xE8EEF3,
+      FRONTAL: 0x7EA6FF,
+      PARIETAL: 0x82D6A4,
+      TEMPORAL: 0xF0C96C,
+      OCCIPITAL: 0xA989D8,
+      THALAMUS: 0x2DD4BF,
+      HIPPOCAMPUS: 0x14B8A6,
+      AMYGDALA: 0x10B981,
+      BASAL_GANGLIA: 0xFB7185,
+      CEREBELLUM: 0xFB923C,
+      BRAINSTEM: 0x94A3B8,
+      ACC: 0xF43F5E,
+      
+      // Layer Stack (L1-L5)
+      L5: 0xA989D8,
+      L4: 0x7EA6FF,
+      L3: 0x82D6A4,
+      L2: 0xF0C96C,
+      L1: 0xE58982,
+
+      FLOW_PRIMARY: 0x1E293B,
+      FLOW_PRIMARY_DARK: 0x38BDF8
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 2. SCENE SETUP, RENDERER, & POST-TONEMAPPING (v2: WebGL guard + adaptive DPR)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const host = document.getElementById("canvas-host");
+    const IS_COARSE = window.matchMedia("(pointer: coarse)").matches;
+    const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    } catch (e) {
+      document.getElementById("loader").classList.add("done");
+      document.getElementById("gl-fail").style.display = "flex";
+      throw e;
+    }
+    // v2: cap pixel ratio on touch GPUs; transmission passes removed elsewhere
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_COARSE ? 1.5 : 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xF8FAFC); // Default Academic Clean White
+    scene.fog = new THREE.Fog(0xF8FAFC, 0.9, 2.2); // v2: match camera range
+
+    // Camera setup (Perspective default, near/far suitable for meter scale)
+    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.01, 20);
+    camera.position.set(0.32, 0.22, 0.35);
+
+    // v2: true orthographic camera for the 3 labelled ortho views
+    const ORTHO_HALF_H = 0.16;
+    const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 20);
+    function fitOrtho() {
+      const aspect = window.innerWidth / window.innerHeight;
+      orthoCam.left = -ORTHO_HALF_H * aspect;
+      orthoCam.right = ORTHO_HALF_H * aspect;
+      orthoCam.top = ORTHO_HALF_H;
+      orthoCam.bottom = -ORTHO_HALF_H;
+      orthoCam.updateProjectionMatrix();
+    }
+    fitOrtho();
+    let activeCam = camera;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0, 0);
+    controls.minDistance = 0.15;
+    controls.maxDistance = 2.5;
+    // v2: second controls instance bound to the ortho camera; only one enabled
+    const orthoControls = new OrbitControls(orthoCam, renderer.domElement);
+    orthoControls.enableDamping = true;
+    orthoControls.dampingFactor = 0.05;
+    orthoControls.target.set(0, 0, 0);
+    orthoControls.minZoom = 0.5;
+    orthoControls.maxZoom = 6;
+    orthoControls.enabled = false;
+    const activeControls = () => (activeCam === orthoCam ? orthoControls : controls);
+    function setActiveCamera(cam) {
+      activeCam = cam;
+      controls.enabled = (cam === camera);
+      orthoControls.enabled = (cam === orthoCam);
+    }
+    controls.touches = {
+      ONE: THREE.TOUCH.ROTATE,
+      TWO: THREE.TOUCH.DOLLY_PAN
+    };
+    renderer.domElement.style.touchAction = "none";
+    controls.update();
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 3. LIGHTING (SCENE_SPEC.md §Lighting: Soft Academic Lighting)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    scene.add(ambientLight);
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    keyLight.position.set(0.4, 0.6, 0.5);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024; // v2: 2048 was overkill at this scale
+    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.camera.near = 0.1;
+    keyLight.shadow.camera.far = 2.0;
+    keyLight.shadow.camera.left = -0.3;
+    keyLight.shadow.camera.right = 0.3;
+    keyLight.shadow.camera.top = 0.3;
+    keyLight.shadow.camera.bottom = -0.3;
+    keyLight.shadow.bias = -0.0005;
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xedf2f7, 0.6);
+    fillLight.position.set(-0.4, 0.2, -0.3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.35);
+    rimLight.position.set(0, -0.4, -0.5);
+    scene.add(rimLight);
+
+    // Subtle Ground Shadow Plane
+    const groundGeo = new THREE.PlaneGeometry(3, 3);
+    const groundMat = new THREE.ShadowMaterial({ opacity: 0.12 });
+    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.position.y = -0.16;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 4. ANATOMICAL DATA REGISTRY (Metadata for hover & click inspector)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const ANATOMY_REGISTRY = {
+      "CTX_Frontal_L": {
+        name: "Left Frontal Cortex",
+        code: "CTX_Frontal (Left)",
+        desc: "Planning, decision making, abstraction, and goal management. Houses the prefrontal cortex (PFC) and primary motor cortex.",
+        role: "Top-Down Prior Generation & Goal State Selection",
+        color: PALETTE.FRONTAL
+      },
+      "CTX_Frontal_R": {
+        name: "Right Frontal Cortex",
+        code: "CTX_Frontal (Right)",
+        desc: "Behavioral inhibition, spatial working memory, and social decision coordination.",
+        role: "Hierarchical Policy Optimization & Execution Arbitration",
+        color: PALETTE.FRONTAL
+      },
+      "CTX_Parietal_L": {
+        name: "Left Parietal Cortex",
+        code: "CTX_Parietal (Left)",
+        desc: "Spatial representation, multisensory integration, symbolic computation, and attention shifting.",
+        role: "Spatial State Estimation & Sensorimotor Translation",
+        color: PALETTE.PARIETAL
+      },
+      "CTX_Parietal_R": {
+        name: "Right Parietal Cortex",
+        code: "CTX_Parietal (Right)",
+        desc: "Body schema mapping, spatial coordinates, and sensory attentional salience maps.",
+        role: "Egocentric-to-Allocentric Coordinate Transformation",
+        color: PALETTE.PARIETAL
+      },
+      "CTX_Temporal_L": {
+        name: "Left Temporal Cortex",
+        code: "CTX_Temporal (Left)",
+        desc: "Object recognition, semantic memory, and language comprehension (Wernicke's area).",
+        role: "Semantic Encoding & High-Level Invariant Features",
+        color: PALETTE.TEMPORAL
+      },
+      "CTX_Temporal_R": {
+        name: "Right Temporal Cortex",
+        code: "CTX_Temporal (Right)",
+        desc: "Prosody, environmental sound identification, face recognition (FFA), and episodic context.",
+        role: "Pattern Recognition & Holistic Perceptual Grounding",
+        color: PALETTE.TEMPORAL
+      },
+      "CTX_Occipital_L": {
+        name: "Left Occipital Cortex",
+        code: "CTX_Occipital (Left)",
+        desc: "Primary (V1) and extrastriate visual processing (motion, form, retinotopic mapping).",
+        role: "Low-Level Perceptual Prediction Error Computation (V1-V4)",
+        color: PALETTE.OCCIPITAL
+      },
+      "CTX_Occipital_R": {
+        name: "Right Occipital Cortex",
+        code: "CTX_Occipital (Right)",
+        desc: "Visual field representation, optical flow parsing, and contour orientation.",
+        role: "Sensory Feature Dequantization & Residual Flow Extraction",
+        color: PALETTE.OCCIPITAL
+      },
+      "SUB_Thalamus": {
+        name: "Thalamus (Bilateral)",
+        code: "SUB_Thalamus",
+        desc: "Sensory relay and routing hub. Gating signals between sensory periphery and neocortex via thalamocortical loops.",
+        role: "Dynamic Attention Gating & Information Routing Waist",
+        color: PALETTE.THALAMUS
+      },
+      "SUB_Hippocampus": {
+        name: "Hippocampus (Bilateral)",
+        code: "SUB_Hippocampus",
+        desc: "Episodic memory consolidation, cognitive map formation, and spatial place-cell navigation.",
+        role: "Generative World Model Simulator & Memory Indexing",
+        color: PALETTE.HIPPOCAMPUS
+      },
+      "SUB_Amygdala": {
+        name: "Amygdala (Bilateral)",
+        code: "SUB_Amygdala",
+        desc: "Affective salience, threat detection, emotional valence conditioning, and arousal modulation.",
+        role: "Surprise Valuation & Homeostatic Priority Signaling",
+        color: PALETTE.AMYGDALA
+      },
+      "SUB_BasalGanglia": {
+        name: "Basal Ganglia (Striatum)",
+        code: "SUB_BasalGanglia",
+        desc: "Action selection, habit learning, dopamine-mediated reinforcement, and motor disinhibition.",
+        role: "Reinforcement-Driven Action Gating & Policy Selection",
+        color: PALETTE.BASAL_GANGLIA
+      },
+      "SUB_Cerebellum": {
+        name: "Cerebellum",
+        code: "SUB_Cerebellum",
+        desc: "Fine motor control, precision timing, and rapid internal forward model prediction error correction.",
+        role: "Fast Internal Forward Model (Sensorimotor Micro-Loops)",
+        color: PALETTE.CEREBELLUM
+      },
+      "SUB_Brainstem": {
+        name: "Brainstem (Midbrain, Pons, Medulla)",
+        code: "SUB_Brainstem",
+        desc: "Autonomic regulation, ascending arousal neuromodulation (dopamine, serotonin, noradrenaline), motor output.",
+        role: "Embodied Actuation & Global Neuromodulatory Gain",
+        color: PALETTE.BRAINSTEM
+      },
+      "SUB_ACC": {
+        name: "Anterior Cingulate Cortex (ACC)",
+        code: "SUB_ACC",
+        desc: "Error monitoring, outcome evaluation, cognitive conflict detection, and pain/effort integration.",
+        role: "Conflict Detection & Prediction Error Optimization",
+        color: PALETTE.ACC
+      }
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 5. PROCEDURAL GEOMETRY BUILDERS
+    // ─────────────────────────────────────────────────────────────────────────────
+    const rootGroup = new THREE.Group();
+    scene.add(rootGroup);
+
+    const headGroup = new THREE.Group();
+    const cortexGroup = new THREE.Group();
+    const subcorticalGroup = new THREE.Group();
+    const stackGroup = new THREE.Group();
+    const loopGroup = new THREE.Group();
+
+    rootGroup.add(headGroup);
+    rootGroup.add(cortexGroup);
+    rootGroup.add(subcorticalGroup);
+    rootGroup.add(stackGroup);
+    rootGroup.add(loopGroup);
+
+    const interactiveMeshes = [];
+    const explodableMeshes = [];
+
+    // Cortical Lobes Materials
+    // v2: transmission removed (it forces a full extra render pass per material);
+    // opacity + clearcoat keep the glassy academic look for free
+    function lobeMaterial(hex) {
+      return new THREE.MeshPhysicalMaterial({
+        color: hex, roughness: 0.45, metalness: 0.05,
+        transmission: 0.0, transparent: true, opacity: 0.78,
+        clearcoat: 0.2, side: THREE.DoubleSide
+      });
+    }
+    const lobeMaterials = {
+      FRONTAL: lobeMaterial(PALETTE.FRONTAL),
+      PARIETAL: lobeMaterial(PALETTE.PARIETAL),
+      TEMPORAL: lobeMaterial(PALETTE.TEMPORAL),
+      OCCIPITAL: lobeMaterial(PALETTE.OCCIPITAL)
+    };
+
+    function buildHemisphereLobes(side) {
+      const isLeft = (side === "L");
+      const signX = isLeft ? -1 : 1;
+
+      // 1. FRONTAL LOBE
+      // Anterior portion (Z: 0.0 to 0.088, Y: -0.01 to 0.075)
+      const fGeo = new THREE.SphereGeometry(1, 36, 28, isLeft ? Math.PI * 0.5 : 0, Math.PI * 0.5, 0, Math.PI * 0.72);
+      deformLobe(fGeo, signX, "frontal");
+      const frontalMesh = new THREE.Mesh(fGeo, lobeMaterials.FRONTAL.clone());
+      frontalMesh.name = `CTX_Frontal_${side}`;
+      frontalMesh.castShadow = true;
+      frontalMesh.receiveShadow = true;
+      frontalMesh.userData = {
+        id: `CTX_Frontal_${side}`,
+        origPos: new THREE.Vector3(0, 0, 0),
+        explodeDir: new THREE.Vector3(signX * 0.035, 0.025, 0.050)
+      };
+      cortexGroup.add(frontalMesh);
+      interactiveMeshes.push(frontalMesh);
+      explodableMeshes.push(frontalMesh);
+
+      // 2. PARIETAL LOBE
+      // Superior posterior (Z: -0.045 to 0.01, Y: 0.01 to 0.075)
+      const pGeo = new THREE.SphereGeometry(1, 32, 24, isLeft ? Math.PI * 0.5 : 0, Math.PI * 0.5, 0, Math.PI * 0.60);
+      deformLobe(pGeo, signX, "parietal");
+      const parietalMesh = new THREE.Mesh(pGeo, lobeMaterials.PARIETAL.clone());
+      parietalMesh.name = `CTX_Parietal_${side}`;
+      parietalMesh.castShadow = true;
+      parietalMesh.receiveShadow = true;
+      parietalMesh.userData = {
+        id: `CTX_Parietal_${side}`,
+        origPos: new THREE.Vector3(0, 0, 0),
+        explodeDir: new THREE.Vector3(signX * 0.030, 0.045, -0.020)
+      };
+      cortexGroup.add(parietalMesh);
+      interactiveMeshes.push(parietalMesh);
+      explodableMeshes.push(parietalMesh);
+
+      // 3. TEMPORAL LOBE
+      // Inferior lateral (Z: -0.04 to 0.035, Y: -0.04 to 0.005)
+      const tGeo = new THREE.SphereGeometry(1, 32, 24, isLeft ? Math.PI * 0.45 : 0.05, Math.PI * 0.5, Math.PI * 0.25, Math.PI * 0.55);
+      deformLobe(tGeo, signX, "temporal");
+      const temporalMesh = new THREE.Mesh(tGeo, lobeMaterials.TEMPORAL.clone());
+      temporalMesh.name = `CTX_Temporal_${side}`;
+      temporalMesh.castShadow = true;
+      temporalMesh.receiveShadow = true;
+      temporalMesh.userData = {
+        id: `CTX_Temporal_${side}`,
+        origPos: new THREE.Vector3(0, 0, 0),
+        explodeDir: new THREE.Vector3(signX * 0.055, -0.020, 0.010)
+      };
+      cortexGroup.add(temporalMesh);
+      interactiveMeshes.push(temporalMesh);
+      explodableMeshes.push(temporalMesh);
+
+      // 4. OCCIPITAL LOBE
+      // Posterior pole (Z: -0.085 to -0.035, Y: -0.025 to 0.03)
+      const oGeo = new THREE.SphereGeometry(1, 28, 22, isLeft ? Math.PI * 0.5 : 0, Math.PI * 0.5, Math.PI * 0.15, Math.PI * 0.65);
+      deformLobe(oGeo, signX, "occipital");
+      const occipitalMesh = new THREE.Mesh(oGeo, lobeMaterials.OCCIPITAL.clone());
+      occipitalMesh.name = `CTX_Occipital_${side}`;
+      occipitalMesh.castShadow = true;
+      occipitalMesh.receiveShadow = true;
+      occipitalMesh.userData = {
+        id: `CTX_Occipital_${side}`,
+        origPos: new THREE.Vector3(0, 0, 0),
+        explodeDir: new THREE.Vector3(signX * 0.025, 0.005, -0.055)
+      };
+      cortexGroup.add(occipitalMesh);
+      interactiveMeshes.push(occipitalMesh);
+      explodableMeshes.push(occipitalMesh);
+    }
+
+    function deformLobe(geo, signX, type) {
+      const pos = geo.attributes.position;
+      const v = new THREE.Vector3();
+
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+
+        // Gyri displacement harmonic
+        const g = Math.sin(v.x * 22) * Math.cos(v.y * 22) * Math.sin(v.z * 22) * 0.045;
+
+        if (type === "frontal") {
+          v.x = (v.x * 0.062 + signX * 0.004) * (1 + g);
+          v.y = (v.y * 0.058 + 0.016) * (1 + g);
+          v.z = (v.z * 0.075 + 0.028) * (1 + g);
+        } else if (type === "parietal") {
+          v.x = (v.x * 0.060 + signX * 0.004) * (1 + g);
+          v.y = (v.y * 0.055 + 0.028) * (1 + g);
+          v.z = (v.z * 0.068 - 0.022) * (1 + g);
+        } else if (type === "temporal") {
+          v.x = (v.x * 0.065 + signX * 0.010) * (1 + g);
+          v.y = (v.y * 0.045 - 0.015) * (1 + g);
+          v.z = (v.z * 0.065 + 0.005) * (1 + g);
+        } else if (type === "occipital") {
+          v.x = (v.x * 0.050 + signX * 0.004) * (1 + g);
+          v.y = (v.y * 0.048 + 0.002) * (1 + g);
+          v.z = (v.z * 0.062 - 0.050) * (1 + g);
+        }
+
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      geo.computeVertexNormals();
+    }
+
+    buildHemisphereLobes("L");
+    buildHemisphereLobes("R");
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 6. SUBCORTICAL STRUCTURES (SCENE_SPEC.md §Subcortical structures)
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Thalamus: central ellipse, cyan, ~35×28×25 mm
+    const thalMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.THALAMUS, roughness: 0.35, metalness: 0.15,
+      emissive: PALETTE.THALAMUS, emissiveIntensity: 0.10
+    });
+    for (const signX of [-1, 1]) {
+      const thalGeo = new THREE.SphereGeometry(1, 24, 18);
+      thalGeo.scale(0.014, 0.011, 0.016);
+      const thalMesh = new THREE.Mesh(thalGeo, thalMat);
+      thalMesh.position.set(signX * 0.011, 0.006, -0.004);
+      thalMesh.rotation.y = signX * 0.2;
+      thalMesh.castShadow = true;
+      thalMesh.name = "SUB_Thalamus";
+      thalMesh.userData = { id: "SUB_Thalamus" };
+      subcorticalGroup.add(thalMesh);
+      interactiveMeshes.push(thalMesh);
+    }
+
+    // Hippocampus: inferior-medial temporal, curved, teal, ~40 mm long
+    const hippoMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.HIPPOCAMPUS, roughness: 0.38, metalness: 0.12,
+      emissive: PALETTE.HIPPOCAMPUS, emissiveIntensity: 0.08
+    });
+    for (const signX of [-1, 1]) {
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(signX * 0.024, -0.020, 0.014),
+        new THREE.Vector3(signX * 0.030, -0.018, -0.006),
+        new THREE.Vector3(signX * 0.025, -0.012, -0.024),
+        new THREE.Vector3(signX * 0.014, -0.004, -0.028)
+      ]);
+      const hippoGeo = new THREE.TubeGeometry(curve, 28, 0.0042, 14, false);
+      const hippoMesh = new THREE.Mesh(hippoGeo, hippoMat);
+      hippoMesh.castShadow = true;
+      hippoMesh.name = "SUB_Hippocampus";
+      hippoMesh.userData = { id: "SUB_Hippocampus" };
+      subcorticalGroup.add(hippoMesh);
+      interactiveMeshes.push(hippoMesh);
+    }
+
+    // Amygdala: anterior to hippocampus, green, ~14 mm sphere/almond
+    const amygMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.AMYGDALA, roughness: 0.35, metalness: 0.1,
+      emissive: PALETTE.AMYGDALA, emissiveIntensity: 0.12
+    });
+    for (const signX of [-1, 1]) {
+      const amygGeo = new THREE.SphereGeometry(1, 20, 16);
+      amygGeo.scale(0.0065, 0.0055, 0.0075);
+      const amygMesh = new THREE.Mesh(amygGeo, amygMat);
+      amygMesh.position.set(signX * 0.023, -0.019, 0.020);
+      amygMesh.castShadow = true;
+      amygMesh.name = "SUB_Amygdala";
+      amygMesh.userData = { id: "SUB_Amygdala" };
+      subcorticalGroup.add(amygMesh);
+      interactiveMeshes.push(amygMesh);
+    }
+
+    // Basal Ganglia: anterior-central cluster (Caudate + Putamen), coral, ~28 mm
+    const bgMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.BASAL_GANGLIA, roughness: 0.38, metalness: 0.15,
+      emissive: PALETTE.BASAL_GANGLIA, emissiveIntensity: 0.12
+    });
+    for (const signX of [-1, 1]) {
+      const bgCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(signX * 0.016, 0.012, 0.018),
+        new THREE.Vector3(signX * 0.022, 0.018, 0.002),
+        new THREE.Vector3(signX * 0.020, 0.014, -0.016),
+        new THREE.Vector3(signX * 0.016, 0.002, -0.020)
+      ]);
+      const bgGeo = new THREE.TubeGeometry(bgCurve, 24, 0.0048, 12, false);
+      const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+      bgMesh.castShadow = true;
+      bgMesh.name = "SUB_BasalGanglia";
+      bgMesh.userData = { id: "SUB_BasalGanglia" };
+      subcorticalGroup.add(bgMesh);
+      interactiveMeshes.push(bgMesh);
+
+      const putGeo = new THREE.SphereGeometry(1, 18, 14);
+      putGeo.scale(0.009, 0.007, 0.012);
+      const putMesh = new THREE.Mesh(putGeo, bgMat);
+      putMesh.position.set(signX * 0.024, 0.006, 0.002);
+      subcorticalGroup.add(putMesh);
+      interactiveMeshes.push(putMesh);
+      putMesh.userData = { id: "SUB_BasalGanglia" };
+    }
+
+    // Anterior Cingulate Cortex (ACC): curved band arching over corpus callosum, muted red/pink
+    const accMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.ACC, roughness: 0.40, metalness: 0.1,
+      emissive: PALETTE.ACC, emissiveIntensity: 0.15
+    });
+    for (const signX of [-1, 1]) {
+      const accCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(signX * 0.005, 0.012, 0.028),
+        new THREE.Vector3(signX * 0.006, 0.024, 0.018),
+        new THREE.Vector3(signX * 0.006, 0.026, -0.005),
+        new THREE.Vector3(signX * 0.005, 0.018, -0.020)
+      ]);
+      const accGeo = new THREE.TubeGeometry(accCurve, 24, 0.0035, 12, false);
+      const accMesh = new THREE.Mesh(accGeo, accMat);
+      accMesh.name = "SUB_ACC";
+      accMesh.userData = { id: "SUB_ACC" };
+      subcorticalGroup.add(accMesh);
+      interactiveMeshes.push(accMesh);
+    }
+
+    // Cerebellum: posterior-inferior, orange, ~50×30×35 mm
+    const cerebMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.CEREBELLUM, roughness: 0.50, metalness: 0.08,
+      emissive: PALETTE.CEREBELLUM, emissiveIntensity: 0.10
+    });
+    for (const signX of [-1, 1]) {
+      const cGeo = new THREE.SphereGeometry(1, 26, 20);
+      cGeo.scale(0.025, 0.018, 0.022);
+      const cMesh = new THREE.Mesh(cGeo, cerebMat);
+      cMesh.position.set(signX * 0.022, -0.040, -0.042);
+      cMesh.rotation.x = -0.2;
+      cMesh.castShadow = true;
+      cMesh.name = "SUB_Cerebellum";
+      cMesh.userData = { id: "SUB_Cerebellum" };
+      subcorticalGroup.add(cMesh);
+      interactiveMeshes.push(cMesh);
+    }
+
+    // Brainstem: inferior central stalk, gray, ~20×18×45 mm
+    const stemMat = new THREE.MeshStandardMaterial({
+      color: PALETTE.BRAINSTEM, roughness: 0.42, metalness: 0.12
+    });
+    const stemGeo = new THREE.CylinderGeometry(0.009, 0.0075, 0.045, 20);
+    const stemMesh = new THREE.Mesh(stemGeo, stemMat);
+    stemMesh.position.set(0, -0.045, -0.012);
+    stemMesh.rotation.x = 0.18;
+    stemMesh.castShadow = true;
+    stemMesh.name = "SUB_Brainstem";
+    stemMesh.userData = { id: "SUB_Brainstem" };
+    subcorticalGroup.add(stemMesh);
+    interactiveMeshes.push(stemMesh);
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 7. TRANSLUCENT HEAD ENVELOPE (SCENE_SPEC.md §Head)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const headMat = new THREE.MeshPhysicalMaterial({
+      color: PALETTE.HEAD,
+      roughness: 0.55,
+      metalness: 0.05,
+      transmission: 0.0, // v2: was 0.88, cost a transmission pass; opacity carries it
+      transparent: true,
+      opacity: 0.14,
+      depthWrite: false,
+      side: THREE.FrontSide
+    });
+
+    const headGeo = new THREE.SphereGeometry(1, 40, 32);
+    headGeo.scale(HEAD_W * 0.5, HEAD_H * 0.5, HEAD_D * 0.5);
+    const hPos = headGeo.attributes.position;
+    const hv = new THREE.Vector3();
+    for (let i = 0; i < hPos.count; i++) {
+      hv.fromBufferAttribute(hPos, i);
+      if (hv.y < 0 && hv.z > 0) {
+        hv.x *= (1.0 - 0.25 * Math.abs(hv.y / (HEAD_H * 0.5)));
+      }
+      hPos.setXYZ(i, hv.x, hv.y - 0.010, hv.z);
+    }
+    headGeo.computeVertexNormals();
+
+    const headMesh = new THREE.Mesh(headGeo, headMat);
+    headMesh.position.set(0, 0, 0);
+    headGroup.add(headMesh);
+
+    const headWireMat = new THREE.MeshBasicMaterial({
+      color: 0x94A3B8, wireframe: true, transparent: true, opacity: 0.08
+    });
+    const headWireMesh = new THREE.Mesh(headGeo, headWireMat);
+    headMesh.add(headWireMesh);
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 8. LAYERED PROCESSING STACK (SCENE_SPEC.md §Layered processing stack)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const stackLayers = [
+      { name: "L5 Language & Social Cognition", code: "L5", color: PALETTE.L5, y: 0.056 },
+      { name: "L4 Abstract Reasoning & Planning", code: "L4", color: PALETTE.L4, y: 0.028 },
+      { name: "L3 World Model / Simulation", code: "L3", color: PALETTE.L3, y: 0.000 },
+      { name: "L2 Perception & Representation", code: "L2", color: PALETTE.L2, y: -0.028 },
+      { name: "L1 Sensorimotor & Homeostasis", code: "L1", color: PALETTE.L1, y: -0.056 }
+    ];
+
+    stackGroup.position.set(0.18, 0.0, 0.0);
+
+    const layerPlateGeo = new THREE.BoxGeometry(0.120, 0.004, 0.050);
+
+    // v2: seeded RNG — identical layout on every load, matching the Blender refs
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    const rand = mulberry32(1337);
+
+    stackLayers.forEach((layer) => {
+      const plateMat = new THREE.MeshPhysicalMaterial({
+        color: layer.color, roughness: 0.35, transmission: 0.0, // v2: was 0.6
+        transparent: true, opacity: 0.55, depthWrite: false
+      });
+      const plate = new THREE.Mesh(layerPlateGeo, plateMat);
+      plate.position.set(0, layer.y, 0);
+      plate.castShadow = true;
+      stackGroup.add(plate);
+
+      const nodeCount = 7;
+      const nodeGeo = new THREE.SphereGeometry(0.0022, 12, 10);
+      const nodeMat = new THREE.MeshBasicMaterial({ color: layer.color });
+
+      const nodePositions = [];
+      for (let n = 0; n < nodeCount; n++) {
+        const nx = (rand() - 0.5) * 0.090;
+        const nz = (rand() - 0.5) * 0.035;
+        const node = new THREE.Mesh(nodeGeo, nodeMat);
+        node.position.set(nx, layer.y + 0.003, nz);
+        stackGroup.add(node);
+        nodePositions.push(new THREE.Vector3(nx, layer.y + 0.003, nz));
+      }
+
+      const linePts = [];
+      for (let i = 0; i < nodePositions.length - 1; i++) {
+        linePts.push(nodePositions[i], nodePositions[i + 1]);
+      }
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+      const lineMat = new THREE.LineBasicMaterial({ color: layer.color, transparent: true, opacity: 0.6 });
+      const lines = new THREE.LineSegments(lineGeo, lineMat);
+      stackGroup.add(lines);
+    });
+
+    for (const bx of [-0.045, 0.0, 0.045]) {
+      const busGeo = new THREE.CylinderGeometry(0.001, 0.001, 0.120, 8);
+      const busMat = new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 });
+      const bus = new THREE.Mesh(busGeo, busMat);
+      bus.position.set(bx, 0, 0);
+      stackGroup.add(bus);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 9. PREDICTIVE CONTROL LOOP (SCENE_SPEC.md §Closed-loop control diagram)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const loopSteps = [
+      { name: "Perceive", pos: new THREE.Vector3(-0.065, -0.015, 0.080) },
+      { name: "Encode", pos: new THREE.Vector3(-0.045, 0.025, 0.060) },
+      { name: "Predict", pos: new THREE.Vector3(0.0, 0.045, 0.030) },
+      { name: "Compare", pos: new THREE.Vector3(0.045, 0.025, 0.0) },
+      { name: "Update", pos: new THREE.Vector3(0.055, -0.010, -0.030) },
+      { name: "Plan", pos: new THREE.Vector3(0.0, -0.030, -0.050) },
+      { name: "Act", pos: new THREE.Vector3(-0.055, -0.035, -0.010) }
+    ];
+
+    const loopPoints = loopSteps.map(s => s.pos);
+    loopPoints.push(loopPoints[0]);
+
+    const loopSpline = new THREE.CatmullRomCurve3(loopPoints);
+    const tubeGeo = new THREE.TubeGeometry(loopSpline, 90, 0.0018, 12, true);
+    const tubeMat = new THREE.MeshStandardMaterial({
+      color: 0x2563eb, roughness: 0.3, metalness: 0.1,
+      emissive: 0x2563eb, emissiveIntensity: 0.25
+    });
+    const loopTube = new THREE.Mesh(tubeGeo, tubeMat);
+    loopGroup.add(loopTube);
+
+    const PULSE_COUNT = 6;
+    const pulseMeshes = [];
+    const pulseGeo = new THREE.SphereGeometry(0.004, 16, 12);
+    const pulseMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+    for (let i = 0; i < PULSE_COUNT; i++) {
+      const pMesh = new THREE.Mesh(pulseGeo, pulseMat);
+      loopGroup.add(pMesh);
+      pulseMeshes.push({ mesh: pMesh, offset: i / PULSE_COUNT });
+    }
+
+    // v2: precomputed loop lookup — no getPointAt allocation per pulse per frame
+    const LOOP_LUT = loopSpline.getSpacedPoints(256);
+    function loopPointAt(t) {
+      const f = ((t % 1) + 1) % 1 * LOOP_LUT.length;
+      return LOOP_LUT[Math.floor(f) % LOOP_LUT.length];
+    }
+
+    // v2: every subcortical structure joins the exploded view (radial spread)
+    const SUB_EXPLODE = {
+      SUB_Thalamus: [0.0, 0.030, 0.0],
+      SUB_Hippocampus: [-0.030, -0.012, 0.012],
+      SUB_Amygdala: [-0.042, -0.010, 0.022],
+      SUB_BasalGanglia: [0.034, 0.014, 0.006],
+      SUB_Cerebellum: [0.020, -0.030, -0.034],
+      SUB_Brainstem: [0.0, -0.042, -0.006],
+      SUB_ACC: [0.0, 0.038, 0.006]
+    };
+    subcorticalGroup.children.forEach((m) => {
+      const d = SUB_EXPLODE[m.name];
+      if (!d) return;
+      // putamen shares the BasalGanglia id; explode from its own base position
+      m.userData.explodeDir = new THREE.Vector3(d[0], d[1], d[2]);
+      explodableMeshes.push(m);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 9b. 3D LABEL SPRITES (v2: structure names live in the scene, not just HUD)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const labelGroup = new THREE.Group();
+    rootGroup.add(labelGroup);
+    const stackLabelMeshes = []; // layer labels parented to stackGroup (slide with it)
+    function makeLabel(text, hex, scale = 1) {
+      const c = document.createElement("canvas");
+      c.width = 512; c.height = 112;
+      const g = c.getContext("2d");
+      const css = "#" + hex.toString(16).padStart(6, "0");
+      g.fillStyle = "rgba(10, 14, 22, 0.82)";
+      g.beginPath();
+      if (g.roundRect) g.roundRect(6, 14, 500, 84, 20);
+      else g.rect(6, 14, 500, 84);
+      g.fill();
+      g.fillStyle = css;
+      g.beginPath();
+      g.arc(52, 56, 20, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "#ffffff";
+      g.font = "600 34px 'Plus Jakarta Sans', sans-serif";
+      g.textBaseline = "middle";
+      g.fillText(text, 86, 58);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+      sp.scale.set(0.062 * scale, 0.0136 * scale, 1);
+      sp.renderOrder = 999;
+      return sp;
+    }
+    const LABEL_DEFS = [
+      ["Frontal", PALETTE.FRONTAL, 0.0, 0.082, 0.052],
+      ["Parietal", PALETTE.PARIETAL, 0.0, 0.092, -0.028],
+      ["Temporal", PALETTE.TEMPORAL, -0.082, -0.018, 0.004],
+      ["Occipital", PALETTE.OCCIPITAL, 0.0, 0.036, -0.092],
+      ["Thalamus", PALETTE.THALAMUS, 0.0, 0.034, -0.004],
+      ["Hippocampus", PALETTE.HIPPOCAMPUS, -0.052, -0.020, 0.008],
+      ["Amygdala", PALETTE.AMYGDALA, -0.056, -0.032, 0.030],
+      ["Basal Ganglia", PALETTE.BASAL_GANGLIA, 0.056, 0.024, 0.008],
+      ["Cerebellum", PALETTE.CEREBELLUM, 0.056, -0.060, -0.052],
+      ["Brainstem", PALETTE.BRAINSTEM, 0.0, -0.082, -0.012],
+      ["ACC", PALETTE.ACC, 0.0, 0.052, 0.020]
+    ];
+    LABEL_DEFS.forEach(([text, hex, x, y, z, s]) => {
+      const sp = makeLabel(text, hex, s || 1);
+      sp.position.set(x, y, z);
+      labelGroup.add(sp);
+    });
+    // v2: layer labels live inside stackGroup so they slide with the plates
+    const STACK_LABELS = [
+      ["L5 · Language", PALETTE.L5, 0.056],
+      ["L4 · Reasoning", PALETTE.L4, 0.028],
+      ["L3 · World Model", PALETTE.L3, 0.000],
+      ["L2 · Perception", PALETTE.L2, -0.028],
+      ["L1 · Sensorimotor", PALETTE.L1, -0.056]
+    ];
+    STACK_LABELS.forEach(([text, hex, y]) => {
+      const sp = makeLabel(text, hex, 0.85);
+      sp.position.set(0.075, y, 0);
+      stackGroup.add(sp);
+      stackLabelMeshes.push(sp);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 10. INTERACTION, RAYCASTING & HOVER INSPECTOR
+    // (v2: raycast only when the pointer or camera actually moved)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(-999, -999);
+    let hoveredMesh = null;
+    let selectedMesh = null;
+    let pointerDirty = false;
+    let lastPickMs = 0;
+
+    const inspName = document.getElementById("insp-name");
+    const inspCode = document.getElementById("insp-code");
+    const inspDesc = document.getElementById("insp-desc");
+    const inspRole = document.getElementById("insp-role");
+
+    function updateInspector(id) {
+      const data = ANATOMY_REGISTRY[id];
+      if (!data) return;
+      inspName.textContent = data.name;
+      inspCode.textContent = data.code;
+      inspDesc.textContent = data.desc;
+      inspRole.textContent = `Predictive Role: ${data.role}`;
+    }
+
+    function pickStructure(clientX, clientY) {
+      mouse.x = (clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, activeCam);
+      const intersects = raycaster.intersectObjects(interactiveMeshes, false);
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        if (selectedMesh && selectedMesh.material.emissive) {
+          selectedMesh.material.emissiveIntensity = selectedMesh.userData.origEmissive || 0.1;
+        }
+        selectedMesh = hit;
+        if (selectedMesh.material.emissive) {
+          selectedMesh.userData.origEmissive = selectedMesh.material.emissiveIntensity;
+          selectedMesh.material.emissiveIntensity = 0.45;
+        }
+        const id = hit.userData.id;
+        if (id) updateInspector(id);
+        return true;
+      }
+      return false;
+    }
+
+    window.addEventListener("pointermove", (e) => {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      pointerDirty = true;
+    });
+
+    window.addEventListener("pointerup", (e) => {
+      if (e.target && (e.target.tagName === "CANVAS" || e.target.id === "canvas-host")) {
+        pickStructure(e.clientX, e.clientY);
+      }
+    });
+
+    window.addEventListener("click", (e) => {
+      if (e.target && (e.target.tagName === "CANVAS" || e.target.id === "canvas-host")) {
+        pickStructure(e.clientX, e.clientY);
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 11. 6 REFERENCE CAMERAS PRESETS (SCENE_SPEC.md §Cameras)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const CAMERA_PRESETS = {
+      master: {
+        pos: new THREE.Vector3(0.30, 0.20, 0.32),
+        target: new THREE.Vector3(0, 0, 0),
+        desc: "01 CAM_Master: 3/4 Perspective Overview",
+        explode: 0.0,
+        ortho: false
+      },
+      left: {
+        pos: new THREE.Vector3(-0.48, 0.01, 0.0),
+        target: new THREE.Vector3(0, 0, 0),
+        desc: "02 CAM_LeftOrthographic: Sagittal View",
+        explode: 0.0,
+        ortho: true
+      },
+      front: {
+        pos: new THREE.Vector3(0.0, 0.01, 0.48),
+        target: new THREE.Vector3(0, 0, 0),
+        desc: "03 CAM_FrontOrthographic: Coronal Anterior View",
+        explode: 0.0,
+        ortho: true
+      },
+      top: {
+        pos: new THREE.Vector3(0.0, 0.48, 0.001),
+        target: new THREE.Vector3(0, 0, 0),
+        desc: "04 CAM_TopOrthographic: Axial Superior View",
+        explode: 0.0,
+        ortho: true
+      },
+      exploded: {
+        pos: new THREE.Vector3(0.36, 0.26, 0.28),
+        target: new THREE.Vector3(0.08, 0, 0),
+        desc: "05 CAM_ExplodedLayers: Disassembled Cortical Core & 5-Layer Stack",
+        explode: 0.75,
+        ortho: false
+      },
+      detail: {
+        pos: new THREE.Vector3(0.14, 0.04, 0.16),
+        target: new THREE.Vector3(0, -0.01, 0),
+        desc: "06 CAM_Detail: Subcortical Loop Nuclei",
+        explode: 0.45,
+        ortho: false
+      }
+    };
+
+    let camTween = null;
+    const camToast = document.getElementById("cam-toast");
+    let toastTimer = null;
+
+    function showToast(text) {
+      camToast.textContent = text;
+      camToast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => camToast.classList.remove("visible"), 2400);
+    }
+
+    function tweenCamera(presetKey) {
+      const p = CAMERA_PRESETS[presetKey];
+      if (!p) return;
+
+      showToast(p.desc);
+
+      // v2: switch camera body for ortho presets, tweening from current pose
+      const nextCam = p.ortho ? orthoCam : camera;
+      if (nextCam !== activeCam) {
+        nextCam.position.copy(activeCam.position);
+        (nextCam === orthoCam ? orthoControls : controls).target.copy(activeControls().target);
+        setActiveCamera(nextCam);
+        pointerDirty = true;
+      }
+      const ctl = activeControls();
+      const startPos = activeCam.position.clone();
+      const endPos = p.pos.clone();
+      const startTarget = ctl.target.clone();
+      const endTarget = p.target.clone();
+      const startTime = performance.now();
+      const duration = 1000;
+
+      if (p.explode !== undefined) {
+        setExplode(p.explode);
+        explodeSlider.value = p.explode;
+        explodeVal.textContent = `${Math.round(p.explode * 100)}%`;
+      }
+
+      camTween = {
+        update: (now) => {
+          const t = Math.min(1, (now - startTime) / duration);
+          const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+          activeCam.position.lerpVectors(startPos, endPos, ease);
+          ctl.target.lerpVectors(startTarget, endTarget, ease);
+          ctl.update();
+          pointerDirty = true;
+
+          if (t >= 1) camTween = null;
+        }
+      };
+    }
+
+    document.querySelectorAll(".cam-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".cam-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        tweenCamera(btn.dataset.cam);
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 12. EXPLODED VIEW SLIDER (Smooth radial cortical lobe displacement)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const explodeSlider = document.getElementById("explode-slider");
+    const explodeVal = document.getElementById("explode-val");
+
+    function setExplode(progress) {
+      explodableMeshes.forEach(mesh => {
+        const dir = mesh.userData.explodeDir;
+        if (!dir) return;
+        // v2: subcortical meshes keep their modelled base position; cortex sits at origin
+        if (!mesh.userData.basePos) mesh.userData.basePos = mesh.position.clone();
+        mesh.position.copy(mesh.userData.basePos).addScaledVector(dir, progress * 1.5);
+      });
+      // v2: the stack slides out and the loop drops slightly — full disassembly
+      stackGroup.position.set(0.18 + progress * 0.12, 0, 0);
+      loopGroup.position.y = -progress * 0.03;
+    }
+
+    explodeSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      setExplode(val);
+      explodeVal.textContent = `${Math.round(val * 100)}%`;
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 13. VISIBILITY & THEME TOGGLES
+    // ─────────────────────────────────────────────────────────────────────────────
+    const toggleHead = document.getElementById("toggle-head");
+    const toggleCortex = document.getElementById("toggle-cortex");
+    const toggleSubcortical = document.getElementById("toggle-subcortical");
+    const toggleStack = document.getElementById("toggle-stack");
+    const toggleLoop = document.getElementById("toggle-loop");
+    const toggleTurntable = document.getElementById("toggle-turntable");
+    const togglePulse = document.getElementById("toggle-pulse");
+
+    let isTurntable = false;
+    let isPulseActive = !REDUCED_MOTION; // v2: respect reduced-motion
+    let labelsOn = true;
+
+    function syncToggle(btn, on) {
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    toggleHead.addEventListener("click", () => {
+      headGroup.visible = !headGroup.visible;
+      syncToggle(toggleHead, headGroup.visible);
+    });
+
+    toggleCortex.addEventListener("click", () => {
+      cortexGroup.visible = !cortexGroup.visible;
+      syncToggle(toggleCortex, cortexGroup.visible);
+    });
+
+    toggleSubcortical.addEventListener("click", () => {
+      subcorticalGroup.visible = !subcorticalGroup.visible;
+      syncToggle(toggleSubcortical, subcorticalGroup.visible);
+    });
+
+    toggleStack.addEventListener("click", () => {
+      stackGroup.visible = !stackGroup.visible;
+      syncToggle(toggleStack, stackGroup.visible);
+    });
+
+    toggleLoop.addEventListener("click", () => {
+      loopGroup.visible = !loopGroup.visible;
+      syncToggle(toggleLoop, loopGroup.visible);
+    });
+
+    toggleTurntable.addEventListener("click", () => {
+      isTurntable = !isTurntable;
+      toggleTurntable.textContent = `Turntable: ${isTurntable ? "ON" : "OFF"}`;
+      syncToggle(toggleTurntable, isTurntable);
+    });
+
+    togglePulse.addEventListener("click", () => {
+      isPulseActive = !isPulseActive;
+      togglePulse.textContent = `Signal Pulse: ${isPulseActive ? "ON" : "OFF"}`;
+      syncToggle(togglePulse, isPulseActive);
+      pulseMeshes.forEach(p => p.mesh.visible = isPulseActive);
+    });
+    // v2: apply the reduced-motion default to the button state on load
+    if (!isPulseActive) {
+      togglePulse.textContent = "Signal Pulse: OFF";
+      syncToggle(togglePulse, false);
+      pulseMeshes.forEach(p => p.mesh.visible = false);
+    }
+
+    const toggleLabels = document.getElementById("toggle-labels");
+    toggleLabels.addEventListener("click", () => {
+      labelsOn = !labelsOn;
+      labelGroup.visible = labelsOn;
+      stackLabelMeshes.forEach(sp => sp.visible = labelsOn);
+      toggleLabels.textContent = `Labels: ${labelsOn ? "ON" : "OFF"}`;
+      syncToggle(toggleLabels, labelsOn);
+    });
+
+    // v2: one-click PNG export of the current view (for posts and QA)
+    document.getElementById("snapshot-png").addEventListener("click", () => {
+      renderer.render(scene, activeCam);
+      renderer.domElement.toBlob((blob) => {
+        if (!blob) { showToast("Snapshot failed"); return; }
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "brain-predictive-control.png";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        showToast("Snapshot saved");
+      });
+    });
+
+    // v2: keyboard — 1-6 switch views, L toggles labels
+    const camKeys = ["master", "left", "front", "top", "exploded", "detail"];
+    window.addEventListener("keydown", (e) => {
+      if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= 6) {
+        const key = camKeys[n - 1];
+        document.querySelectorAll(".cam-btn").forEach(b => b.classList.toggle("active", b.dataset.cam === key));
+        tweenCamera(key);
+      } else if (e.key === "l" || e.key === "L") {
+        toggleLabels.click();
+      }
+    });
+
+    // Theme Selector
+    document.querySelectorAll(".theme-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".theme-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const mode = btn.dataset.theme;
+
+        document.body.classList.remove("dark-mode", "blueprint-mode");
+
+        if (mode === "dark") {
+          document.body.classList.add("dark-mode");
+          scene.background.set(0x09090B);
+          scene.fog.color.set(0x09090B);
+          ambientLight.intensity = 0.55;
+          keyLight.intensity = 1.4;
+          headWireMat.color.set(0x38BDF8);
+          groundMat.opacity = 0.35;
+        } else if (mode === "blueprint") {
+          document.body.classList.add("blueprint-mode");
+          scene.background.set(0x06101E);
+          scene.fog.color.set(0x06101E);
+          ambientLight.intensity = 0.65;
+          keyLight.intensity = 1.2;
+          headWireMat.color.set(0x0284C7);
+          groundMat.opacity = 0.40;
+        } else {
+          // Academic White
+          scene.background.set(0xF8FAFC);
+          scene.fog.color.set(0xF8FAFC);
+          ambientLight.intensity = 0.75;
+          keyLight.intensity = 1.2;
+          headWireMat.color.set(0x94A3B8);
+          groundMat.opacity = 0.12;
+        }
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 14. ANIMATION LOOP
+    // ─────────────────────────────────────────────────────────────────────────────
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
+
+      // Camera tweening
+      if (camTween) {
+        camTween.update(performance.now());
+      } else {
+        activeControls().update();
+      }
+
+      // Turntable slow orbit
+      if (isTurntable) {
+        rootGroup.rotation.y += delta * 0.25;
+        pointerDirty = true; // hover target moved under a still pointer
+      }
+
+      // Signal Pulse Animation along loop (v2: precomputed lookup, no allocs)
+      if (isPulseActive) {
+        pulseMeshes.forEach(p => {
+          p.mesh.position.copy(loopPointAt(elapsed * 0.35 + p.offset));
+        });
+      }
+
+      // v2: hover raycast at most ~12/s and only after pointer/camera motion.
+      // When idle, re-feed the current hover so the highlight persists for free.
+      let intersects = [];
+      if (pointerDirty && performance.now() - lastPickMs > 80) {
+        lastPickMs = performance.now();
+        pointerDirty = false;
+        raycaster.setFromCamera(mouse, activeCam);
+        intersects = raycaster.intersectObjects(interactiveMeshes, false);
+      } else if (hoveredMesh) {
+        intersects = [{ object: hoveredMesh }];
+      }
+
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        if (hoveredMesh !== hit) {
+          if (hoveredMesh && hoveredMesh.material.emissive) {
+            hoveredMesh.material.emissiveIntensity = hoveredMesh.userData.origEmissive || 0.1;
+          }
+          hoveredMesh = hit;
+          if (hoveredMesh.material.emissive) {
+            hoveredMesh.userData.origEmissive = hoveredMesh.material.emissiveIntensity;
+            hoveredMesh.material.emissiveIntensity = 0.45;
+          }
+          const id = hit.userData.id;
+          if (id) updateInspector(id);
+        }
+      } else {
+        if (hoveredMesh) {
+          if (hoveredMesh.material.emissive) {
+            hoveredMesh.material.emissiveIntensity = hoveredMesh.userData.origEmissive || 0.1;
+          }
+          hoveredMesh = null;
+        }
+      }
+
+      renderer.render(scene, activeCam);
+      // v2: dismiss the loader once the first real frame lands
+      document.getElementById("loader").classList.add("done");
+    }
+
+    animate();
+
+    // Window Resize Handler (v2: both cameras)
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      fitOrtho();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>code-to-3d — Build Tracker</title>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --ink:#0f172a; --mut:#64748b; --line:#e2e8f0;
+          --ok:#16a34a; --run:#2563eb; --wait:#d97706; --violet:#7c3aed; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"Segoe UI",sans-serif; background:var(--bg);
+         color:var(--ink); max-width:960px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:22px; letter-spacing:-.02em; }
+  h1 .tag { font-size:11px; color:var(--violet); border:1px solid currentColor;
+            border-radius:6px; padding:2px 8px; margin-left:10px; vertical-align:middle; }
+  .sub { color:var(--mut); font-size:13px; margin:6px 0 18px; }
+  #bar { height:10px; background:var(--line); border-radius:99px; overflow:hidden; margin-bottom:4px; }
+  #fill { height:100%; width:0; background:linear-gradient(90deg,var(--violet),var(--run));
+          transition:width .4s ease; }
+  #pct { font-size:12px; color:var(--mut); margin-bottom:20px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.1em; color:var(--mut);
+       margin:26px 0 10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px 16px; margin-bottom:8px; display:flex; gap:12px; align-items:flex-start; }
+  .card input { margin-top:3px; width:16px; height:16px; accent-color:var(--violet); }
+  .card .t { font-weight:650; font-size:14px; }
+  .card .d { font-size:12.5px; color:var(--mut); margin-top:2px; line-height:1.5; }
+  .card.done .t { text-decoration:line-through; color:var(--mut); }
+  .pill { font-size:10px; font-weight:700; padding:2px 8px; border-radius:99px; margin-left:8px; }
+  .p-done { background:#dcfce7; color:var(--ok); }
+  .p-next { background:#fef3c7; color:var(--wait); }
+  .p-later { background:#f1f5f9; color:var(--mut); }
+  .p-human { background:#ede9fe; color:var(--violet); }
+  #reset { margin-top:26px; font-size:12px; color:var(--mut); background:none;
+           border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <h1>code-to-3d tracker <span class="tag">SHAKE THE INDUSTRY</span></h1>
+  <p class="sub">Prompt → pinned spec → deterministic 3D. Checkboxes persist in this browser.</p>
+  <div id="bar"><div id="fill"></div></div>
+  <div id="pct"></div>
+  <div id="list"></div>
+  <button id="reset">Reset all</button>
+
+<script>
+const ITEMS = [
+  ["w0","Wave 0 — spec, scaffold, blender lib (A·B·C)","done","TECH-DESIGN, SPEC-SCHEMA, validator, ctd_blender, skill draft. Verified by coordinator."],
+  ["w1","Wave 1 — web template, QA loop, MCP surface (D·E·F)","done","Round-trip byte-identical. QA reproduces OCR-resolution trap. MCP lists 6 tools live, fail-closed."],
+  ["w1b","Integrator fixes: tsconfig, build script, types","done","F compiles + builds clean; stdio smoke green."],
+  ["docs","Docs in repo: audience, backends, charts, build plan","done","docs/AUDIENCE, BACKENDS (+3 PNGs), BUILD-PLAN."],
+  ["ex","Examples + per-example SKILL.md","done","examples/brain/SKILL.md + contract README."],
+  ["repo","Create unfoundbox-crew/code-to-3d + push tree","human","Empty repo, no README. Coordinator pushes everything + tracking."],
+  ["w2","Wave 2 — spec→preset compiler, MCP backends wired","next","D geometry slots + F stub backends. Biggest remaining build."],
+  ["qa2","no_overlap algorithm (currently stub)","next","Connected-component boxes on label sprites; gate stays red till then."],
+  ["gate","Acceptance: novel scene, zero hand edits, QA catches injected overlap","next","The 0.1.0 ship gate. Third-party agent solo build."],
+  ["npm","npm org + OIDC per package, first publish","later","Copy zero-vision release.yml. Scope names then."],
+  ["app","Masses app (Tauri prompt-box + viewer)","later","After CLI demand pulls it. Not 0.1.0."],
+  ["blog","Chart series → blog/SEO/GEO posts","later","affinity, monopoly, ladder PNGs ready in docs/charts."],
+];
+const KEY = "ctd-tracker-v1";
+let state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch(e) { state = {}; }
+// seed shipped-done items once
+ITEMS.forEach(([id,,st]) => { if (st === "done" && !(id in state)) state[id] = true; });
+function save(){ localStorage.setItem(KEY, JSON.stringify(state)); paint(); }
+function paint(){
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  let done = 0;
+  ITEMS.forEach(([id,title,st,desc]) => {
+    const checked = st === "done" ? true : !!state[id];
+    if (checked) done++;
+    const div = document.createElement("div");
+    div.className = "card" + (checked ? " done" : "");
+    const pill = st === "human" ? "p-human" : st === "done" ? "p-done" : st === "next" ? "p-next" : "p-later";
+    const label = st === "human" ? "YOU" : st.toUpperCase();
+    div.innerHTML = `<input type="checkbox" ${checked ? "checked" : ""} ${st==="done"?"disabled":""}>
+      <div><span class="t">${title}</span><span class="pill ${pill}">${label}</span>
+      <div class="d">${desc}</div></div>`;
+    div.querySelector("input").addEventListener("change", e => { state[id] = e.target.checked; save(); });
+    list.appendChild(div);
+  });
+  const pct = Math.round(done / ITEMS.length * 100);
+  document.getElementById("fill").style.width = pct + "%";
+  document.getElementById("pct").textContent = done + " / " + ITEMS.length + " — " + pct + "%";
+}
+document.getElementById("reset").addEventListener("click", () => {
+  state = {}; ITEMS.forEach(([id,,st]) => { if (st === "done") state[id] = true; }); save();
+});
+paint();
+</script>
+</body>
+</html>
