@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{scene_title}}</title>
+<meta name="realengine-scene" content="{{scene_name}}" />
+<meta name="realengine-build-sha256" content="{{build_sha256}}" />
+<meta name="realengine-spec-sha256" content="{{spec_sha256}}" />
+<!--
+  RealEngine generic scene page. Geometry is code; every string is a double-brace slot
+  (web/build_web.py binds them and fails loud on any unbound slot).
+
+  The whole scene is the embedded build JSON below — produced by
+  spec/scene_spec.py from SCENE_SPEC.md, pinned by build_sha256. Nothing on
+  this page is invented: one named proxy volume per named object in the spec,
+  palette colours from the spec's palette, labels verbatim, cameras as named.
+
+  Query parameters (the QA contract — see views.json):
+    ?view=CAM_Name   select a named camera
+    ?labels=0        hide label overlay
+    ?hud=0           hide panels/buttons (clean frames for OCR)
+  window.REALENGINE_READY flips true (and <body data-ready="1">) after the
+  first frame with the requested view applied.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: {{background_hex}};
+    --ink: #16191d;
+    --ink-soft: #5b6470;
+    --line: rgba(22, 25, 29, 0.14);
+    --panel: rgba(255, 255, 255, 0.86);
+    --accent: #3d4ed0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .panel {
+    position: fixed;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    backdrop-filter: blur(6px);
+  }
+  #titlecard { top: 16px; left: 16px; max-width: 46ch; }
+  #titlecard h1 { margin: 0 0 2px; font-size: 16px; letter-spacing: -0.01em; }
+  #titlecard p { margin: 0; color: var(--ink-soft); font-size: 12px; }
+  #titlecard code { font-size: 11px; color: var(--ink-soft); }
+  #views { top: 16px; right: 16px; display: flex; flex-direction: column; gap: 6px; }
+  #views strong, #layers strong {
+    display: block; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-soft); margin-bottom: 4px;
+  }
+  #views button {
+    font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+    background: #fff; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px;
+  }
+  #views button[aria-current="true"] { border-color: var(--accent); color: var(--accent); }
+  #layers { bottom: 16px; left: 16px; max-height: 42vh; overflow: auto; }
+  #layers label { display: flex; gap: 7px; align-items: center; font-size: 12px; padding: 2px 0; }
+  #legend { bottom: 16px; right: 16px; max-height: 42vh; overflow: auto; }
+  #legend div { display: flex; gap: 7px; align-items: center; font-size: 12px; padding: 2px 0; }
+  #legend i { width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--line); }
+  #labels { position: fixed; inset: 0; pointer-events: none; }
+  .lab {
+    position: absolute; transform: translate(-50%, -100%);
+    white-space: nowrap; text-align: center;
+    /* Scales with the frame: a 12px label inside a 1600px QA render is
+       below tesseract's reliable size, and the OCR gate then fails a
+       picture a human reads fine. */
+    font-size: max(13px, 1.35vmin); font-weight: 600; color: var(--ink);
+  }
+  /* Opaque pill, not a text shadow: OCR reads crisp glyphs on flat ground,
+     and a name crossing another label's subtitle is what breaks the gate. */
+  .lab em {
+    font-style: normal; display: inline-block;
+    background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    padding: 2px 7px;
+  }
+  .lab span {
+    display: inline-block; margin-top: 2px;
+    font-weight: 400; font-size: max(10.5px, 1.05vmin); color: var(--ink-soft);
+    background: #fff; border-radius: 5px; padding: 0 4px;
+  }
+  .lab b { display: block; width: 5px; height: 5px; margin: 3px auto 0;
+           border-radius: 50%; background: var(--ink); }
+  /* !important: the per-panel #id rules outrank a plain class selector. */
+  body.nohud .panel { display: none !important; }
+  #fallback { position: fixed; inset: 0; display: none; padding: 8vh 6vw;
+              font-size: 14px; color: var(--ink); background: var(--bg); }
+  body.failed #fallback { display: block; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+
+<div class="panel" id="titlecard">
+  <h1>{{scene_title}}</h1>
+  <p>{{scene_subtitle}}</p>
+  <p><code>build {{build_sha256_short}} · spec {{spec_sha256_short}}</code></p>
+</div>
+
+<div class="panel" id="views"><strong>Views</strong></div>
+<div class="panel" id="layers"><strong>Collections</strong></div>
+<div class="panel" id="legend"><strong>Palette</strong></div>
+
+<div id="fallback">
+  <h1>{{scene_title}}</h1>
+  <p><strong>WebGL scene could not load.</strong> This page fetches three.js
+  {{three_version}} from a CDN; it needs network access on first load.
+  The scene data itself is embedded in this file (see the
+  <code>scene-json</code> script tag) and is complete offline.</p>
+</div>
+
+<script id="scene-json" type="application/json">{{scene_json}}</script>
+<script id="views-json" type="application/json">{{views_json}}</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@{{three_version}}/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@{{three_version}}/examples/jsm/"
+  }
+}
+</script>
+
+<script>
+  window.REALENGINE_READY = false;
+  window.REALENGINE_BUILD = "{{build_sha256}}";
+  setTimeout(function () {
+    if (!window.REALENGINE_READY) document.body.classList.add("failed");
+  }, 15000);
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const SCENE_DATA = JSON.parse(document.getElementById("scene-json").textContent);
+const VIEWS = JSON.parse(document.getElementById("views-json").textContent);
+const params = new URLSearchParams(location.search);
+const wantView = params.get("view");
+const showLabels = params.get("labels") !== "0";
+const showSubs = params.get("subs") !== "0";
+const showHud = params.get("hud") !== "0";
+if (!showHud) document.body.classList.add("nohud");
+
+// ---------------------------------------------------------------- renderer
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(SCENE_DATA.render.background);
+
+const extent = SCENE_DATA.extent || [1, 1, 1];
+const center = SCENE_DATA.center || [0, 0, 0];
+const span = Math.max(extent[0], extent[1], extent[2]) || 1;
+
+// ------------------------------------------------------------------ lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const key = new THREE.DirectionalLight(0xffffff, 1.15);
+key.position.set(-span * 2, -span * 2.4, span * 3);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xeef3f8, 0.55);
+fill.position.set(span * 2.5, span * 1.5, span * 1.2);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.3);
+rim.position.set(0, span * 3, -span * 2);
+scene.add(rim);
+
+// --------------------------------------------------------------- ground grid
+const grid = new THREE.GridHelper(span * 4, 16, 0xc9d2dc, 0xe4e9ef);
+grid.rotation.x = Math.PI / 2; // spec axis convention: Z up
+grid.position.set(center[0], center[1], 0);
+scene.add(grid);
+
+// ------------------------------------------------------------------ objects
+// One named proxy volume per named object in the spec. Blockout, not anatomy.
+const groups = new Map();
+for (const name of SCENE_DATA.collections) {
+  const g = new THREE.Group();
+  g.name = name;
+  groups.set(name, g);
+  scene.add(g);
+}
+const labelTargets = [];
+for (const obj of SCENE_DATA.objects) {
+  const [w, d, h] = obj.size_m;
+  const geo = new THREE.BoxGeometry(w, d, h, 2, 2, 2);
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(obj.hex),
+    roughness: obj.roughness,
+    metalness: 0.0,
+    transparent: obj.alpha < 1,
+    opacity: obj.alpha,
+    depthWrite: obj.alpha >= 1,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = obj.name;
+  mesh.position.set(obj.pos[0], obj.pos[1], obj.pos[2]);
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo, 25),
+    new THREE.LineBasicMaterial({ color: 0x2a3138, transparent: true, opacity: 0.35 })
+  );
+  mesh.add(edges);
+  (groups.get(obj.collection) || scene).add(mesh);
+  labelTargets.push({ obj, mesh, top: obj.pos[2] + h / 2 });
+}
+
+// ------------------------------------------------------------------ cameras
+const aspect = () => window.innerWidth / Math.max(window.innerHeight, 1);
+const persp = new THREE.PerspectiveCamera(38, aspect(), span / 200, span * 60);
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, span / 200, span * 60);
+let camera = persp;
+
+const controls = new OrbitControls(persp, renderer.domElement);
+controls.target.set(center[0], center[1], center[2]);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+function applyView(cam) {
+  if (cam.ortho) {
+    const s = cam.ortho_scale || span * 2.3;
+    const a = aspect();
+    ortho.left = (-s * a) / 2; ortho.right = (s * a) / 2;
+    ortho.top = s / 2; ortho.bottom = -s / 2;
+    ortho.position.set(cam.pos[0], cam.pos[1], cam.pos[2]);
+    ortho.up.set(0, 0, 1);
+    ortho.lookAt(cam.target[0], cam.target[1], cam.target[2]);
+    ortho.updateProjectionMatrix();
+    camera = ortho;
+    controls.enabled = false;
+  } else {
+    persp.position.set(cam.pos[0], cam.pos[1], cam.pos[2]);
+    persp.up.set(0, 0, 1);
+    persp.fov = 2 * Math.atan(36 / (2 * (cam.lens || 62))) * (180 / Math.PI);
+    persp.aspect = aspect();
+    persp.updateProjectionMatrix();
+    controls.target.set(cam.target[0], cam.target[1], cam.target[2]);
+    controls.enabled = true;
+    controls.update();
+    camera = persp;
+  }
+  for (const btn of document.querySelectorAll("#views button")) {
+    btn.setAttribute("aria-current", String(btn.dataset.cam === cam.name));
+  }
+}
+
+// ---------------------------------------------------------------------- HUD
+const viewsPanel = document.getElementById("views");
+for (const cam of SCENE_DATA.cameras) {
+  const btn = document.createElement("button");
+  btn.textContent = cam.name.replace(/^CAM_/, "");
+  btn.title = cam.desc || cam.name;
+  btn.dataset.cam = cam.name;
+  btn.addEventListener("click", () => applyView(cam));
+  viewsPanel.appendChild(btn);
+}
+
+const layersPanel = document.getElementById("layers");
+for (const [name, group] of groups) {
+  if (!group.children.length) continue;
+  const label = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = true;
+  box.addEventListener("change", () => { group.visible = box.checked; });
+  label.appendChild(box);
+  label.appendChild(document.createTextNode(name + " (" + group.children.length + ")"));
+  layersPanel.appendChild(label);
+}
+
+const legendPanel = document.getElementById("legend");
+for (const name of Object.keys(SCENE_DATA.palette).sort()) {
+  const row = document.createElement("div");
+  const chip = document.createElement("i");
+  chip.style.background = SCENE_DATA.palette[name].hex;
+  row.appendChild(chip);
+  row.appendChild(document.createTextNode(name));
+  legendPanel.appendChild(row);
+}
+
+// ------------------------------------------------------------------- labels
+const labelLayer = document.getElementById("labels");
+const labelNodes = [];
+if (showLabels) {
+  for (const t of labelTargets) {
+    const el = document.createElement("div");
+    el.className = "lab";
+    el.innerHTML = "";
+    const name = document.createElement("em");
+    name.textContent = t.obj.label;
+    el.appendChild(name);
+    if (t.obj.subtitle && showSubs) {
+      el.appendChild(document.createElement("br"));
+      const sub = document.createElement("span");
+      // Kept short on purpose: long subtitles collide in dense views, and
+      // the OCR gate reads the label NAME, which must stay clean.
+      sub.textContent = t.obj.subtitle.length > 30
+        ? t.obj.subtitle.slice(0, 30).replace(/[ ,.]+$/, "") + "…"
+        : t.obj.subtitle;
+      el.appendChild(sub);
+    }
+    const dot = document.createElement("b");
+    el.appendChild(dot);
+    labelLayer.appendChild(el);
+    labelNodes.push({ el, t, v: new THREE.Vector3() });
+  }
+}
+
+function positionLabels() {
+  for (const node of labelNodes) {
+    // Float the pill clear of the box: text crossing a dark edge is
+    // the single biggest OCR failure mode measured on these renders.
+    node.v.set(node.t.obj.pos[0], node.t.obj.pos[1], node.t.top + 0.07 * span);
+    node.v.project(camera);
+    const x = (node.v.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-node.v.y * 0.5 + 0.5) * window.innerHeight;
+    const visible = node.v.z < 1 && node.t.mesh.parent && node.t.mesh.parent.visible;
+    node.el.style.display = visible ? "block" : "none";
+    node.el.style.left = x.toFixed(1) + "px";
+    node.el.style.top = y.toFixed(1) + "px";
+  }
+}
+
+// -------------------------------------------------------------------- frame
+let currentName = null;
+function resize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  persp.aspect = aspect();
+  persp.updateProjectionMatrix();
+  const cur = SCENE_DATA.cameras.find((c) => c.name === currentName);
+  if (cur && cur.ortho) applyView(cur);
+}
+window.addEventListener("resize", resize);
+
+const chosen =
+  SCENE_DATA.cameras.find((c) => c.name === wantView) ||
+  SCENE_DATA.cameras.find((c) => c.name === "{{default_view}}") ||
+  SCENE_DATA.cameras[0];
+if (chosen) { currentName = chosen.name; applyView(chosen); }
+
+let frames = 0;
+function tick() {
+  if (controls.enabled) controls.update();
+  renderer.render(scene, camera);
+  positionLabels();
+  if (++frames === 2) {
+    window.REALENGINE_READY = true;
+    document.body.dataset.ready = "1";
+  }
+  requestAnimationFrame(tick);
+}
+tick();
+
+window.REALENGINE = { scene, camera: () => camera, data: SCENE_DATA, views: VIEWS, applyView };
+</script>
+</body>
+</html>
