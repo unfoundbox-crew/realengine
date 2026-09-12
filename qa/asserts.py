@@ -11,16 +11,25 @@ Three asserts:
 - views_match: pair PNGs across two render dirs by filename and compare
   pixel dimensions via a minimal PNG IHDR reader (stdlib only, no PIL).
   Dimension check only -- pixel diffing is a later wave.
-- no_overlap: STUB. Raises NotImplementedError; docstring sketches the
-  future algorithm.
+- no_overlap: real since this wave. Part-wise AABB intersection between the
+  named objects of a build, tolerance taken from the spec's own placement
+  tolerance. Also accepts flat pixel boxes for the 2D label case.
 
 Stdlib only.
 """
 
+import json
 import os
+import re
 import shutil
 import struct
 import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "spec"))
+
+import geometry as geometry_mod  # noqa: E402
 
 # zero-vision ships bins named zrv / zrv-mcp / snap.
 # Prefer local `zrv ocr` if present in PATH to avoid network roundtrips.
@@ -99,15 +108,146 @@ def views_match(dir_a, dir_b):
     return rows
 
 
-def no_overlap(*args, **kwargs):
-    """STUB -- label-overlap detection, not yet implemented.
+# "Placement tolerance: major forms +/-5 mm" and friends. The gate must read
+# its slack from the same spec the geometry came from, never from a constant
+# buried in the checker.
+TOLERANCE_RE = re.compile(r"(?i)[±+]/?-?\s*(\d+(?:\.\d+)?)\s*(mm|m)\b")
+DEFAULT_TOLERANCE_M = 0.0
 
-    Future algorithm: render each label sprite in isolation (or threshold
-    the label pass by its solid fill colour), run connected-component
-    labelling over the binary mask to get one bounding box per label,
-    then pairwise box-intersection test with a small pixel margin for
-    anti-aliased edges. Any intersecting pair fails, reporting both
-    label names and the overlap area in px. Until then, overlap is a
-    human-eye check -- see the QA report.
+
+def spec_tolerance_m(build, default=DEFAULT_TOLERANCE_M):
+    """Placement tolerance in metres, read out of the build's own units prose.
+
+    The spec writes tolerance as English ("Placement tolerance: major forms
+    +/-5 mm"), so this reads English. The largest stated tolerance wins: it is
+    slack for the gate, and a gate that picks the tightest number would fail
+    parts the spec explicitly allows to touch.
     """
-    raise NotImplementedError("no_overlap is a stub: overlap stays human-only until Wave 2")
+    notes = []
+    units = (build or {}).get("units") or {}
+    notes.extend(units.get("tolerances") or [])
+    notes.extend(units.get("notes") or [])
+    best = None
+    for note in notes:
+        for value, unit in TOLERANCE_RE.findall(str(note)):
+            metres = float(value) / 1000.0 if unit == "mm" else float(value)
+            best = metres if best is None else max(best, metres)
+    return default if best is None else best
+
+
+def _pixel_box(box):
+    """A flat [x0, y0, x1, y1] pixel box as a degenerate 3D AABB (z = 0)."""
+    x0, y0, x1, y1 = (float(c) for c in box)
+    return [[min(x0, x1), min(y0, y1), 0.0], [max(x0, x1), max(y0, y1), 1.0]]
+
+
+def no_overlap(source=None, boxes=None, tolerance=None, names=None, allow=None):
+    """Pairwise intersection test between named objects. Never raises on a
+    legitimate empty result.
+
+    Two modes, one return shape:
+
+    * **Build mode** -- ``source`` is a build dict, or a path to a
+      ``build.json``. Each object contributes the world AABB of every part of
+      its compiled geometry (a jointed arm contributes one box per link, not
+      one loose box around the whole arm), and a pair fails only when some
+      part of one interpenetrates some part of the other by more than the
+      tolerance on all three axes. Tolerance comes from the spec unless
+      ``tolerance`` overrides it.
+    * **Pixel mode** -- ``boxes`` is a list of flat ``[x0, y0, x1, y1]``
+      boxes, for label sprites on a 2D frame. ``names`` labels them; indices
+      are used when it does not.
+
+    Returns::
+
+        {"ok": bool,
+         "pairs": [{"a": name, "b": name, "overlap": [dx, dy, dz]}, ...],
+         "reason": str | None,      # why the answer is not a real check
+         "tolerance_m": float,
+         "method": "aabb-parts" | "aabb-pixels",
+         "checked": int}            # pairs actually compared
+
+    ``ok`` is True with an empty ``pairs`` list when nothing overlaps. When
+    there is nothing to check at all, ``ok`` is False and ``reason`` says so:
+    an empty input is not a pass.
+
+    Note on method: this is a part-wise **axis-aligned** test, not a true
+    convex-hull test. Exact bounds for each primitive (see
+    ``spec/geometry.py``) make it tight enough that a diagonal arm link no
+    longer reports a collision with thin air; two slim bodies crossing
+    diagonally can still report a false positive, which is the honest trade
+    and is why the failure names the pair and the depth rather than just
+    failing.
+    """
+    if boxes is not None:
+        items = []
+        for i, box in enumerate(boxes):
+            try:
+                aabb = _pixel_box(box)
+            except (TypeError, ValueError):
+                return {"ok": False, "pairs": [], "tolerance_m": 0.0,
+                        "method": "aabb-pixels", "checked": 0,
+                        "reason": "box %d is not [x0, y0, x1, y1]: %r" % (i, box)}
+            label = names[i] if names and i < len(names) else str(i)
+            items.append((label, [aabb]))
+        tol = float(tolerance or 0.0)
+        method = "aabb-pixels"
+    else:
+        build = source
+        if isinstance(build, str):
+            try:
+                with open(build, encoding="utf-8") as f:
+                    build = json.load(f)
+            except (OSError, ValueError) as e:
+                return {"ok": False, "pairs": [], "tolerance_m": 0.0,
+                        "method": "aabb-parts", "checked": 0,
+                        "reason": "could not read a build JSON at %s (%s)"
+                                  % (source, e)}
+        if not isinstance(build, dict) or not build.get("objects"):
+            return {"ok": False, "pairs": [], "tolerance_m": 0.0,
+                    "method": "aabb-parts", "checked": 0,
+                    "reason": "nothing to check: pass a build dict with objects, "
+                              "or pixel boxes= for the 2D label case"}
+        tol = spec_tolerance_m(build) if tolerance is None else float(tolerance)
+        wanted = set(names) if names else None
+        items = []
+        for obj in build["objects"]:
+            if wanted and obj.get("name") not in wanted:
+                continue
+            try:
+                items.append((obj.get("name"), geometry_mod.object_world_boxes(obj)))
+            except geometry_mod.GeometryError as e:
+                return {"ok": False, "pairs": [], "tolerance_m": tol,
+                        "method": "aabb-parts", "checked": 0,
+                        "reason": "object %r has geometry this gate cannot bound "
+                                  "(%s)" % (obj.get("name"), e)}
+        method = "aabb-parts"
+
+    if len(items) < 2:
+        return {"ok": False, "pairs": [], "tolerance_m": tol, "method": method,
+                "checked": 0,
+                "reason": "need at least two objects to compare, got %d"
+                          % len(items)}
+
+    exempt = {tuple(sorted(pair)) for pair in (allow or [])}
+    pairs = []
+    checked = 0
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            name_a, boxes_a = items[i]
+            name_b, boxes_b = items[j]
+            checked += 1
+            if tuple(sorted((name_a, name_b))) in exempt:
+                continue
+            worst = None
+            for box_a in boxes_a:
+                for box_b in boxes_b:
+                    if geometry_mod.aabbs_overlap(box_a, box_b, tol):
+                        depth = geometry_mod.overlap_depth(box_a, box_b)
+                        if worst is None or min(depth) > min(worst):
+                            worst = depth
+            if worst is not None:
+                pairs.append({"a": name_a, "b": name_b, "overlap": worst})
+    pairs.sort(key=lambda p: (p["a"] or "", p["b"] or ""))
+    return {"ok": not pairs, "pairs": pairs, "reason": None,
+            "tolerance_m": tol, "method": method, "checked": checked}

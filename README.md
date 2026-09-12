@@ -17,7 +17,7 @@ Prompt → pinned spec → deterministic 3D on two backends (Blender & Three.js)
 **RealEngine inverts this:**
 1. **Spec is King**: Human intent compiles into a human-readable, machine-checked contract (`SCENE_SPEC.md`).
 2. **Deterministic Backends**: The same spec compiles to native Blender `.blend` files (procedural materials, modifier stacks, aimed cameras) and self-contained Three.js WebGL scenes.
-3. **Machine QA Loop**: Zero-Vision reads render pixels as text (label legibility) *before* asking the human eye to judge taste. Overlap detection is still a stub — see [what works](#what-works-today).
+3. **Machine QA Loop**: Zero-Vision reads render pixels as text (label legibility) and `no_overlap` tests the named objects against each other *before* asking the human eye to judge taste.
 
 ---
 
@@ -53,10 +53,12 @@ Cross-cutting principles:
 
 ## What works today
 
-Honest status, verified on this commit. "Blockout" means one named proxy
-volume per named object in the spec, at its stated size, in its palette
-colour, labelled, under the spec's own cameras — the builder renders what
-the spec says and invents nothing.
+Honest status, verified on this commit. An object with a `geometry` block in
+the spec is **modelled** — cylinders, tori, a lathed profile, a parametric
+jointed arm. An object without one is a **blockout**: one named proxy volume
+at its stated size, in its palette colour, labelled, under the spec's own
+cameras. `build.json` says which is which per object, and the builder renders
+what the spec says and invents nothing.
 
 | MCP tool | State | Needs |
 |---|---|---|
@@ -65,19 +67,22 @@ the spec says and invents nothing.
 | `build` (`web`) | Real. Standalone Three.js page + `build.json` + `views.json` | Nothing to build. The page pulls three.js from a CDN on first open |
 | `build` (`blender`) | Real. `.blend` + PNGs via headless Blender | A Blender binary (`REALENGINE_BLENDER`, PATH, or the macOS bundle) |
 | `views` | Real. PNGs of every named camera | Headless Chromium via Playwright. Without it: no PNGs, exit 3, and the `?view=` URLs any browser can drive |
-| `qa_assert` | Real. OCR label gate (+ optional `views_match`) | Rendered PNGs and zero-vision. `no_overlap` is still a stub |
+| `qa_assert` | Real. OCR label gate (+ optional `views_match`) | Rendered PNGs and zero-vision. `no_overlap` needs neither: it reads `build.json` |
 | `export_scene` | Real. Deterministic zip with a sha256 manifest, or one html/png | Nothing |
 
-Known gaps, stated plainly: `qa/asserts.no_overlap` raises
-`NotImplementedError`; the Blender backend builds a blockout, not modelled
-geometry; CI runs neither the browser nor the OCR gate (no browser and no
-zero-vision in that image), so both are local steps.
+Known gaps, stated plainly: `no_overlap` is a part-wise **axis-aligned**
+test, not a true convex hull, so two slim bodies crossing diagonally can
+still report a false positive — the failure names the pair and the depth so
+you can tell. Placement is still a deterministic grid: the geometry is
+modelled, where each object *sits* is not. The OCR step in CI is
+best-effort while zero-vision is not a pinned dependency; the non-black
+pixel assert next to it is the hard gate.
 
 ## Packages
 
 | Dir | Package | In | Out |
 |---|---|---|---|
-| `spec/` | Schema + `validate.py` + `scene_spec.py` (md ⇄ JSON) + `compile_brief.py` (prompt → spec) + `llm.py` | words or `SCENE_SPEC.md` | valid spec, build JSON, `build_sha256` |
+| `spec/` | Schema + `validate.py` + `scene_spec.py` (md ⇄ JSON) + `geometry.py` (geometry block → primitive parts) + `compile_brief.py` (prompt → spec) + `llm.py` | words or `SCENE_SPEC.md` | valid spec, build JSON, `build_sha256` |
 | `blender/` | `ctd_blender` bpy library + `build.py` + `run_headless.py` | build JSON | `.blend` + QA PNGs |
 | `web/` | `build_scene.py` + `template_scene.html` + `render_views.py` (plus the legacy slot builder `build_web.py`) | spec or build JSON | standalone HTML + `views.json` + PNGs |
 | `qa/` | `asserts.py` + `run_qa.py` (zero-vision OCR, `--json` receipts) | renders dir | pass / fail + missing labels |

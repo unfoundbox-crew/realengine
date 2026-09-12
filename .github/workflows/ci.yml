@@ -23,8 +23,10 @@ jobs:
       - name: Run Python unit tests
         run: python -m unittest discover -s tests -p 'test_*.py'
 
-      - name: Validate example scene spec
-        run: python spec/validate.py examples/brain/SCENE_SPEC.md
+      - name: Validate example scene specs
+        run: |
+          python spec/validate.py examples/brain/SCENE_SPEC.md
+          python spec/validate.py examples/desk-lamp/SCENE_SPEC.md
 
       - name: Verify deterministic web build
         run: |
@@ -38,14 +40,81 @@ jobs:
           python web/build_scene.py examples/brain/SCENE_SPEC.md --out-dir out_ci_scene_b
           diff -u out_ci_scene_a/scene.html out_ci_scene_b/scene.html
           diff -u out_ci_scene_a/build.json out_ci_scene_b/build.json
+          python spec/scene_spec.py roundtrip examples/desk-lamp/SCENE_SPEC.md
 
-      # The OCR gate (qa/run_qa.py) is NOT run here on purpose: it needs a
-      # headless browser for the frames and zero-vision for the OCR, neither
-      # of which is in this image. mcp/test/tools.test.js covers the qa_assert
-      # plumbing with a no-PNG input; the pixel gate stays a local/manual step.
+      # The desk-lamp is the example with modelled geometry, so it is the one
+      # that proves the geometry compiler is deterministic and that the
+      # overlap gate is real rather than a stub that returns success.
+      - name: Geometry build is deterministic and overlap-free
+        run: |
+          python web/build_scene.py examples/desk-lamp/SCENE_SPEC.md --out-dir out_ci_lamp_a
+          python web/build_scene.py examples/desk-lamp/SCENE_SPEC.md --out-dir out_ci_lamp_b
+          diff -u out_ci_lamp_a/build.json out_ci_lamp_b/build.json
+          diff -u tests/golden/desk-lamp.build.json out_ci_lamp_a/build.json
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, "qa")
+          from asserts import no_overlap
+          result = no_overlap("out_ci_lamp_a/build.json")
+          print(json.dumps(result, sort_keys=True))
+          sys.exit(0 if result["ok"] else 1)
+          PY
+
+      # The full render + OCR gate now runs in the `views` job below (headless
+      # Chromium + tesseract on ubuntu-latest). mcp/test/tools.test.js still
+      # covers the qa_assert plumbing with a no-PNG input here.
       - name: Node MCP build & test
         run: |
           cd mcp
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npm run build
           npm test
+
+  views:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright + Chromium
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Build desk-lamp web scene
+        run: python web/build_scene.py examples/desk-lamp/SCENE_SPEC.md --out-dir out_views
+
+      - name: Render the four camera views
+        run: python web/render_views.py --scene-dir out_views --out-dir out_views/renders
+
+      - name: Assert renders are not black
+        run: python qa/png_stats.py out_views/renders/*.png --min-mean 8
+
+      - name: Install tesseract
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+
+      # Best-effort only: qa/run_qa.py shells out to zero-vision's `zrv ocr`,
+      # an unpinned npm package that may not resolve on the runner. tesseract
+      # is the only OCR engine this Linux runner can use -- apple-vision is
+      # macOS-only and never runs in CI. The hard gate is the non-black pixel
+      # assert above; if this step is red, look at it, but it never blocks
+      # the job. A skipped/failed run must still show red here, never green.
+      - name: Label legibility gate (OCR, best-effort)
+        continue-on-error: true
+        run: >
+          python qa/run_qa.py --renders out_views/renders
+          --labels "Base,LowerArm,UpperArm,Shade,Bulb,Top"
+          --engine tesseract --json
+
+      - name: Upload desk-lamp view renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desk-lamp-views
+          path: out_views/renders/*.png
+          retention-days: 14

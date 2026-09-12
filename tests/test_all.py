@@ -9,6 +9,7 @@ Tests:
 """
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -28,7 +29,9 @@ import scene_spec
 import compile_brief
 import build_web
 import build_scene
-from asserts import png_size, views_match, no_overlap
+from asserts import png_size, views_match, no_overlap, spec_tolerance_m
+import geometry
+from ctd_blender import primitives
 import build
 from ctd_blender.materials import hex_to_linear
 
@@ -126,9 +129,12 @@ class TestQaAsserts(unittest.TestCase):
             self.assertTrue(match)
             self.assertEqual(sz_a, sz_b)
 
-    def test_no_overlap_stub(self):
-        with self.assertRaises(NotImplementedError):
-            no_overlap()
+    def test_no_overlap_needs_something_to_check(self):
+        """An empty input is not a pass, and it is not an exception either."""
+        result = no_overlap()
+        self.assertFalse(result["ok"])
+        self.assertIn("nothing to check", result["reason"])
+        self.assertEqual(result["pairs"], [])
 
 
 class TestBlenderBuild(unittest.TestCase):
@@ -326,6 +332,301 @@ class TestWebSceneBackend(unittest.TestCase):
         b = build_scene.build_scene(str(BRAIN_SPEC), os.path.join(self.tmp, "b"))
         self.assertEqual(Path(a["html"]).read_bytes(), Path(b["html"]).read_bytes())
         self.assertEqual(a["build_sha256"], b["build_sha256"])
+
+
+
+LAMP_SPEC = REPO_ROOT / "examples/desk-lamp/SCENE_SPEC.md"
+
+
+def _box(x0, y0, z0, x1, y1, z1):
+    return [[x0, y0, z0], [x1, y1, z1]]
+
+
+class TestGeometryCompiler(unittest.TestCase):
+    """The geometry block: primitives, composition, and a labelled fallback."""
+
+    def test_no_block_is_a_labelled_blockout_box(self):
+        out = geometry.compile_object_geometry(None, [0.2, 0.3, 0.4])
+        self.assertEqual(out["source"], "blockout")
+        self.assertEqual(len(out["parts"]), 1)
+        self.assertEqual(out["parts"][0]["kind"], "box")
+        self.assertEqual(out["parts"][0]["size"], [0.2, 0.3, 0.4])
+        self.assertEqual(out["aabb"], _box(-0.1, -0.15, -0.2, 0.1, 0.15, 0.2))
+        self.assertEqual(out["warnings"], [])
+
+    def test_sphere_bounds_are_exact(self):
+        out = geometry.compile_object_geometry({"kind": "sphere", "radius": 0.03},
+                                              [0.06, 0.06, 0.06])
+        self.assertEqual(out["source"], "modelled")
+        self.assertEqual(out["aabb"], _box(-0.03, -0.03, -0.03, 0.03, 0.03, 0.03))
+        self.assertEqual(out["warnings"], [])
+
+    def test_group_composes_child_offsets(self):
+        block = {"kind": "group", "pos": [0, 0, 0.1], "parts": [
+            {"kind": "cylinder", "radius": 0.05, "height": 0.02},
+            {"kind": "torus", "radius": 0.04, "tube": 0.005, "pos": [0, 0, 0.03]},
+        ]}
+        out = geometry.compile_object_geometry(block, [0.1, 0.1, 0.05])
+        self.assertEqual([p["kind"] for p in out["parts"]], ["cylinder", "torus"])
+        self.assertEqual(out["parts"][0]["pos"], [0.0, 0.0, 0.1])
+        self.assertEqual(out["parts"][1]["pos"], [0.0, 0.0, 0.13])
+
+    def test_arm_becomes_aimed_links_plus_joint_balls(self):
+        block = {"kind": "arm", "radius": 0.01, "joint_radius": 0.012,
+                 "joints": [[0, 0, -0.1], [0.02, 0, 0.0], [0, 0, 0.1]]}
+        out = geometry.compile_object_geometry(block, [0.1, 0.1, 0.2])
+        kinds = [p["kind"] for p in out["parts"]]
+        self.assertEqual(kinds, ["cylinder", "cylinder", "sphere", "sphere",
+                                 "sphere"])
+        # Each link is as long as its segment and sits at the segment midpoint.
+        span = math.sqrt(0.02 ** 2 + 0.1 ** 2)
+        self.assertAlmostEqual(out["parts"][0]["height"], round(span, 6), places=5)
+        self.assertEqual(out["parts"][0]["pos"], [0.01, 0.0, -0.05])
+        # A tilted link is genuinely tilted: not the identity quaternion.
+        self.assertNotEqual(out["parts"][0]["quat"], [0.0, 0.0, 0.0, 1.0])
+
+    def test_lathe_profile_drives_the_bounds(self):
+        block = {"kind": "lathe", "segments": 12,
+                 "profile": [[0.01, -0.05], [0.07, 0.05]]}
+        out = geometry.compile_object_geometry(block, [0.14, 0.14, 0.1])
+        self.assertEqual(out["aabb"], _box(-0.07, -0.07, -0.05, 0.07, 0.07, 0.05))
+        self.assertEqual(out["warnings"], [])
+
+    def test_a_declared_size_that_disagrees_warns_and_never_rescales(self):
+        out = geometry.compile_object_geometry({"kind": "sphere", "radius": 0.05},
+                                               [0.06, 0.06, 0.06])
+        self.assertEqual(len(out["warnings"]), 3)
+        self.assertIn("nothing was rescaled", out["warnings"][0])
+        self.assertEqual(out["parts"][0]["radius"], 0.05)
+
+    def test_rotated_cylinder_bounds_are_tighter_than_its_corner_box(self):
+        part = geometry.compile_object_geometry(
+            {"kind": "cylinder", "radius": 0.01, "height": 0.4,
+             "rot_deg": [0, 90, 0]}, None)["parts"][0]
+        lo, hi = geometry.part_aabb(part)
+        self.assertAlmostEqual(hi[0] - lo[0], 0.4, places=5)
+        self.assertAlmostEqual(hi[2] - lo[2], 0.02, places=5)
+
+    def test_bad_blocks_fail_closed(self):
+        for block in (
+            {"kind": "blob"},
+            {"kind": "group", "rot_deg": [0, 0, 45], "parts": [{"kind": "sphere", "radius": 1}]},
+            {"kind": "group", "parts": []},
+            {"kind": "arm", "joints": [[0, 0, 0], [0, 0, 0]]},
+            {"kind": "cylinder", "radius": 0.01},          # no height
+            {"kind": "lathe", "profile": [[0.01, 0.0]]},    # one point
+        ):
+            with self.assertRaises(geometry.GeometryError, msg=repr(block)):
+                geometry.compile_object_geometry(block, [1, 1, 1])
+
+    def test_compiler_is_deterministic(self):
+        block = {"kind": "arm", "joints": [[0, 0, -0.1], [0.02, 0.01, 0.1]]}
+        a = geometry.compile_object_geometry(block, [1, 1, 1])
+        b = geometry.compile_object_geometry(block, [1, 1, 1])
+        self.assertEqual(scene_spec.canonical_json(a), scene_spec.canonical_json(b))
+
+
+class TestGeometryInTheSpec(unittest.TestCase):
+    """The desk-lamp: the example that stops being boxes."""
+
+    def setUp(self):
+        self.text = LAMP_SPEC.read_text(encoding="utf-8")
+        self.scene = scene_spec.parse_spec(self.text)
+        self.build = scene_spec.to_build_json(self.scene)
+
+    def test_golden_build_json(self):
+        self.assertEqual(scene_spec.canonical_json(self.build),
+                         (GOLDEN / "desk-lamp.build.json").read_text(encoding="utf-8"))
+
+    def test_pinned_hashes(self):
+        pinned = json.loads((GOLDEN / "desk-lamp.hashes.json").read_text(encoding="utf-8"))
+        result = scene_spec.compile_spec(self.text)
+        self.assertEqual(result["build_sha256"], pinned["build_sha256"])
+        self.assertEqual(result["spec_sha256"], pinned["spec_sha256"])
+
+    def test_non_box_objects_round_trip_unchanged(self):
+        again = scene_spec.parse_spec(scene_spec.emit_spec(self.scene))
+        self.assertEqual(scene_spec.canonical_json(again),
+                         scene_spec.canonical_json(self.scene))
+        self.assertEqual(again["geometry"], self.scene["geometry"])
+        self.assertEqual(scene_spec.build_hash(scene_spec.to_build_json(again)),
+                         scene_spec.build_hash(self.build))
+
+    def test_emitted_spec_still_passes_the_validator(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as f:
+            f.write(scene_spec.emit_spec(self.scene))
+            path = f.name
+        try:
+            self.assertEqual(validate.main(path), 0)
+        finally:
+            os.remove(path)
+
+    def test_every_object_names_its_source_and_the_bench_is_the_fallback(self):
+        sources = {o["name"]: o["geometry"]["source"] for o in self.build["objects"]}
+        self.assertEqual(sources["BNCH_Top"], "blockout")
+        for name in ("LAMP_Base", "LAMP_LowerArm", "LAMP_UpperArm",
+                     "LAMP_Shade", "GLOW_Bulb"):
+            self.assertEqual(sources[name], "modelled", name)
+
+    def test_the_shade_and_arms_are_not_boxes(self):
+        kinds = {}
+        for obj in self.build["objects"]:
+            kinds[obj["name"]] = sorted({p["kind"] for p in obj["geometry"]["parts"]})
+        self.assertEqual(kinds["LAMP_Shade"], ["lathe"])
+        self.assertEqual(kinds["LAMP_Base"], ["cylinder", "torus"])
+        self.assertEqual(kinds["LAMP_LowerArm"], ["cylinder", "sphere"])
+        self.assertEqual(kinds["GLOW_Bulb"], ["sphere"])
+        self.assertEqual(kinds["BNCH_Top"], ["box"])
+
+    def test_no_geometry_block_means_no_geometry_key_at_all(self):
+        """A spec written before geometry existed must build byte-identically."""
+        brain = scene_spec.parse_spec(BRAIN_SPEC.read_text(encoding="utf-8"))
+        self.assertNotIn("geometry", brain)
+        for obj in scene_spec.to_build_json(brain)["objects"]:
+            self.assertNotIn("geometry", obj)
+
+    def test_the_modelled_geometry_matches_the_declared_dimensions(self):
+        for obj in self.build["objects"]:
+            self.assertEqual(obj["geometry"]["warnings"], [], obj["name"])
+
+
+class TestNoOverlap(unittest.TestCase):
+    """The overlap gate: real since this wave, and it never raises."""
+
+    def _pair(self, a_pos, b_pos, size=(0.1, 0.1, 0.1), tolerance=None):
+        objects = [{"name": "A", "pos": list(a_pos), "size_m": list(size)},
+                   {"name": "B", "pos": list(b_pos), "size_m": list(size)}]
+        build = {"objects": objects,
+                 "units": {"tolerances": ["Placement tolerance: major forms ±5 mm"]}}
+        return no_overlap(build, tolerance=tolerance)
+
+    def test_a_known_colliding_pair_fails_and_names_it(self):
+        result = self._pair((0, 0, 0), (0.05, 0, 0))
+        self.assertFalse(result["ok"])
+        self.assertEqual([(p["a"], p["b"]) for p in result["pairs"]], [("A", "B")])
+        self.assertAlmostEqual(result["pairs"][0]["overlap"][0], 0.05, places=6)
+        self.assertEqual(result["checked"], 1)
+        self.assertIsNone(result["reason"])
+
+    def test_a_disjoint_pair_passes_with_no_pairs(self):
+        result = self._pair((0, 0, 0), (0.5, 0, 0))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["pairs"], [])
+        self.assertIsNone(result["reason"])
+
+    def test_tolerance_comes_from_the_spec_and_is_slack(self):
+        # 4 mm of interpenetration, inside the spec's ±5 mm placement tolerance.
+        result = self._pair((0, 0, 0), (0.096, 0, 0))
+        self.assertEqual(result["tolerance_m"], 0.005)
+        self.assertTrue(result["ok"])
+        # The same pair with no slack at all is a collision.
+        self.assertFalse(self._pair((0, 0, 0), (0.096, 0, 0), tolerance=0.0)["ok"])
+
+    def test_spec_tolerance_reads_the_units_prose(self):
+        self.assertEqual(spec_tolerance_m({"units": {"tolerances": ["±5 mm"]}}), 0.005)
+        self.assertEqual(spec_tolerance_m({"units": {"notes": ["+/- 0.02 m"]}}), 0.02)
+        self.assertEqual(spec_tolerance_m({}, default=0.001), 0.001)
+
+    def test_touching_faces_are_not_a_collision(self):
+        self.assertTrue(self._pair((0, 0, 0), (0.1, 0, 0), tolerance=0.0)["ok"])
+
+    def test_parts_are_tested_pairwise_not_as_one_loose_box(self):
+        """An L-shaped object's union box swallows its notch; its parts do not."""
+        bracket = {"name": "BRACKET", "pos": [0, 0, 0], "geometry":
+                   geometry.compile_object_geometry(
+                       {"kind": "group", "parts": [
+                           {"kind": "box", "size": [0.1, 0.1, 0.02],
+                            "pos": [0, 0, -0.04]},
+                           {"kind": "box", "size": [0.02, 0.1, 0.1],
+                            "pos": [-0.04, 0, 0]}]}, None)}
+        # Sits in the notch of the L: clear of both arms, inside the union box.
+        pin = {"name": "PIN", "pos": [0.03, 0, 0.02], "size_m": [0.02, 0.02, 0.02]}
+        union = geometry.union_aabb(bracket["geometry"]["parts"])
+        self.assertTrue(geometry.aabbs_overlap(
+            union, _box(0.02, -0.01, 0.01, 0.04, 0.01, 0.03)))
+        result = no_overlap({"objects": [bracket, pin], "units": {}})
+        self.assertTrue(result["ok"], result["pairs"])
+
+    def test_the_desk_lamp_build_has_no_overlaps(self):
+        build = scene_spec.compile_spec(LAMP_SPEC.read_text(encoding="utf-8"))["build"]
+        result = no_overlap(build)
+        self.assertTrue(result["ok"], result["pairs"])
+        self.assertEqual(result["checked"], 15)
+        self.assertEqual(result["tolerance_m"], 0.005)
+
+    def test_pixel_mode_for_label_boxes(self):
+        result = no_overlap(boxes=[[0, 0, 10, 10], [5, 5, 20, 20], [50, 50, 60, 60]],
+                            names=["Thalamus", "Hippocampus", "Cortex"])
+        self.assertFalse(result["ok"])
+        self.assertEqual([(p["a"], p["b"]) for p in result["pairs"]],
+                         [("Thalamus", "Hippocampus")])
+        self.assertEqual(result["method"], "aabb-pixels")
+
+    def test_an_allowed_pair_is_exempt(self):
+        objects = [{"name": "A", "pos": [0, 0, 0], "size_m": [0.1, 0.1, 0.1]},
+                   {"name": "B", "pos": [0.05, 0, 0], "size_m": [0.1, 0.1, 0.1]}]
+        result = no_overlap({"objects": objects, "units": {}}, allow=[("B", "A")])
+        self.assertTrue(result["ok"])
+
+    def test_a_bad_input_reports_a_reason_instead_of_raising(self):
+        self.assertIn("not [x0", no_overlap(boxes=[[1, 2, 3]])["reason"])
+        self.assertIn("could not read", no_overlap("/nonexistent/build.json")["reason"])
+        self.assertIn("at least two", no_overlap(
+            {"objects": [{"name": "A", "pos": [0, 0, 0], "size_m": [1, 1, 1]}],
+             "units": {}})["reason"])
+
+
+class TestPrimitiveTessellation(unittest.TestCase):
+    """Blender's half of the vocabulary, testable with no Blender installed."""
+
+    PARTS = [
+        {"kind": "box", "size": [1, 2, 3]},
+        {"kind": "cylinder", "radius_bottom": 0.05, "radius_top": 0.05,
+         "height": 0.2, "segments": 12},
+        {"kind": "cone", "radius_bottom": 0.05, "radius_top": 0.0,
+         "height": 0.2, "segments": 12},
+        {"kind": "sphere", "radius": 0.05, "segments": 12, "rings": 6},
+        {"kind": "torus", "radius": 0.05, "tube": 0.01, "segments": 12,
+         "tube_segments": 8},
+        {"kind": "lathe", "profile": [[0.01, 0.0], [0.05, 0.1], [0.05, 0.12]],
+         "segments": 12},
+        {"kind": "extrude", "outline": [[0, 0], [0.1, 0], [0.1, 0.1], [0, 0.1]],
+         "depth": 0.05},
+    ]
+
+    def test_every_kind_tessellates_to_a_sane_mesh(self):
+        for part in self.PARTS:
+            verts, faces = primitives.part_mesh(part)
+            self.assertGreaterEqual(len(verts), 4, part["kind"])
+            self.assertGreaterEqual(len(faces), 4, part["kind"])
+            for face in faces:
+                self.assertGreaterEqual(len(face), 3, part["kind"])
+                self.assertEqual(len(set(face)), len(face), part["kind"])
+                for index in face:
+                    self.assertTrue(0 <= index < len(verts), part["kind"])
+
+    def test_counts_are_what_the_maths_says(self):
+        verts, faces = primitives.part_mesh(self.PARTS[1])   # cylinder, 12 seg
+        self.assertEqual(len(verts), 24)
+        self.assertEqual(len(faces), 14)                     # 12 walls + 2 caps
+        verts, faces = primitives.part_mesh(self.PARTS[2])   # cone, 12 seg
+        self.assertEqual(len(verts), 13)                     # ring + apex
+        self.assertEqual(len(faces), 13)                     # 12 walls + 1 cap
+        verts, _ = primitives.part_mesh(self.PARTS[4])       # torus 12x8
+        self.assertEqual(len(verts), 96)
+
+    def test_vertices_stay_inside_the_compiler_s_bounds(self):
+        for part in self.PARTS:
+            compiled = dict(part, pos=[0, 0, 0], quat=[0, 0, 0, 1])
+            lo, hi = geometry.part_aabb(compiled)
+            for vert in primitives.part_mesh(compiled)[0]:
+                for i in range(3):
+                    self.assertLessEqual(lo[i] - 1e-6, vert[i], part["kind"])
+                    self.assertLessEqual(vert[i], hi[i] + 1e-6, part["kind"])
+
+    def test_an_unknown_kind_fails_closed(self):
+        with self.assertRaises(ValueError):
+            primitives.part_mesh({"kind": "teapot"})
 
 
 if __name__ == "__main__":
