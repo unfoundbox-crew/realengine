@@ -307,6 +307,21 @@
       color: var(--text-muted);
     }
 
+    .verb-status {
+      margin-left: auto;
+      flex: none;
+      font-size: 10.5px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      opacity: 0.85;
+    }
+
+    .verb-status.live { color: #2e7d5b; }
+    .verb-status.dep { color: #9a6b1f; }
+
     /* Terminal snippet */
     .terminal {
       background: #000;
@@ -425,19 +440,19 @@ SCENE_SPEC.md (8KB, git-diffable contract)
     <section id="mcp">
       <div style="text-align: center; margin-bottom: 32px;">
         <h2 style="font-size: 28px; font-weight: 750; letter-spacing: -0.02em;">Tiny Surface, Deterministic Execution</h2>
-        <p style="color: var(--text-muted); margin-top: 6px;">Exactly 6 MCP verbs. Agents never see raw bpy or low-level GL.</p>
+        <p style="color: var(--text-muted); margin-top: 6px;">Exactly 6 MCP verbs, all wired to real steps. Agents never see raw bpy or low-level GL. A verb whose dependency is missing says so and returns <code>ok:false</code> &mdash; it never fakes a result.</p>
       </div>
 
       <div class="grid-2">
         <div class="card">
           <h3>The 6 MCP Verbs</h3>
           <ul class="verb-list mono">
-            <li class="verb-item"><span class="verb-name">brief</span> <span class="verb-desc">Record prompt &amp; reference assets for compilation.</span></li>
-            <li class="verb-item"><span class="verb-name">spec_compile</span> <span class="verb-desc">Compile brief into authoritative SCENE_SPEC.md.</span></li>
-            <li class="verb-item"><span class="verb-name">build</span> <span class="verb-desc">Build approved spec on Blender or WebGL backend.</span></li>
-            <li class="verb-item"><span class="verb-name">views</span> <span class="verb-desc">Render multi-camera QA views for validation.</span></li>
-            <li class="verb-item"><span class="verb-name">qa_assert</span> <span class="verb-desc">Run zero-vision OCR asserts over render passes.</span></li>
-            <li class="verb-item"><span class="verb-name">export_scene</span> <span class="verb-desc">Export verified .blend, standalone HTML, or PNG.</span></li>
+            <li class="verb-item"><span class="verb-name">brief</span> <span class="verb-desc">Draft SCENE_SPEC.md from words, schema-checked.</span> <span class="verb-status dep">needs a model endpoint</span></li>
+            <li class="verb-item"><span class="verb-name">spec_compile</span> <span class="verb-desc">Spec &rarr; pinned build JSON. Offline, deterministic.</span> <span class="verb-status live">live</span></li>
+            <li class="verb-item"><span class="verb-name">build</span> <span class="verb-desc">Standalone Three.js page, or .blend via headless Blender.</span> <span class="verb-status live">live</span></li>
+            <li class="verb-item"><span class="verb-name">views</span> <span class="verb-desc">PNGs of every named camera, or a manifest any browser can drive.</span> <span class="verb-status dep">needs headless Chromium</span></li>
+            <li class="verb-item"><span class="verb-name">qa_assert</span> <span class="verb-desc">Zero-vision OCR label gate over a renders directory.</span> <span class="verb-status dep">needs renders + zero-vision</span></li>
+            <li class="verb-item"><span class="verb-name">export_scene</span> <span class="verb-desc">Deterministic zip with a sha256 manifest, or one HTML/PNG.</span> <span class="verb-status live">live</span></li>
           </ul>
         </div>
 

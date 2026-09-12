@@ -1,8 +1,8 @@
 {
   "name": "code-to-3d-mcp",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Tiny MCP surface for code-to-3d (~6 verbs). Wave 1 sketch: all handlers fail closed.",
+  "description": "Tiny MCP surface for code-to-3d (6 verbs) over the RealEngine spec, build, views, QA and export steps.",
   "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1"
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node test/smoke.test.js"
+    "test": "node test/smoke.test.js && node test/tools.test.js && node test/live.test.js",
+    "test:live": "REALENGINE_LIVE=1 node test/live.test.js"
   }
 }

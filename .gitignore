@@ -21,3 +21,7 @@ build/
 
 # Agent worktrees
 .claude/worktrees/
+
+# brief store (spec/compile_brief.py)
+.realengine/
+out/
