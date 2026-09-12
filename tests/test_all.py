@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT / "qa"))
 sys.path.insert(0, str(REPO_ROOT / "blender"))
 
 import validate
+import scene_spec
 import build_web
 from asserts import png_size, views_match, no_overlap
 import build
@@ -150,6 +151,100 @@ class TestBlenderBuild(unittest.TestCase):
             self.assertEqual(spec.get("scene"), "TEST")
         finally:
             os.remove(p)
+
+
+GOLDEN = REPO_ROOT / "tests/golden"
+BRAIN_SPEC = REPO_ROOT / "examples/brain/SCENE_SPEC.md"
+
+
+class TestSceneSpecRoundTrip(unittest.TestCase):
+    """SCENE_SPEC.md <-> JSON: golden files + fixpoint + pinned hashes."""
+
+    def setUp(self):
+        self.text = BRAIN_SPEC.read_text(encoding="utf-8")
+        self.scene = scene_spec.parse_spec(self.text)
+
+    def test_golden_scene_json(self):
+        self.assertEqual(scene_spec.canonical_json(self.scene),
+                         (GOLDEN / "brain.scene.json").read_text(encoding="utf-8"))
+
+    def test_golden_build_json(self):
+        build = scene_spec.to_build_json(self.scene)
+        self.assertEqual(scene_spec.canonical_json(build),
+                         (GOLDEN / "brain.build.json").read_text(encoding="utf-8"))
+
+    def test_golden_emitted_markdown(self):
+        self.assertEqual(scene_spec.emit_spec(self.scene),
+                         (GOLDEN / "brain.emitted.md").read_text(encoding="utf-8"))
+
+    def test_pinned_hashes(self):
+        pinned = json.loads((GOLDEN / "brain.hashes.json").read_text(encoding="utf-8"))
+        result = scene_spec.compile_spec(self.text)
+        self.assertEqual(result["build_sha256"], pinned["build_sha256"])
+        self.assertEqual(result["spec_sha256"], pinned["spec_sha256"])
+
+    def test_emit_parse_is_a_fixpoint(self):
+        again = scene_spec.parse_spec(scene_spec.emit_spec(self.scene))
+        self.assertEqual(scene_spec.canonical_json(again),
+                         scene_spec.canonical_json(self.scene))
+        third = scene_spec.parse_spec(scene_spec.emit_spec(again))
+        self.assertEqual(scene_spec.canonical_json(third),
+                         scene_spec.canonical_json(again))
+
+    def test_emitted_spec_passes_validator(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as f:
+            f.write(scene_spec.emit_spec(self.scene))
+            path = f.name
+        try:
+            self.assertEqual(validate.main(path), 0)
+        finally:
+            os.remove(path)
+
+    def test_parsed_content(self):
+        self.assertEqual(self.scene["scene"], "Human_Brain_Predictive_Control")
+        self.assertEqual(len(self.scene["cameras"]), 6)
+        self.assertEqual(len(self.scene["build_order"]), 20)
+        self.assertEqual(self.scene["palette"]["Frontal"]["hex"], "#7EA6FF")
+        # #E8EEF3 must not truncate to the 3-digit form #E8E
+        self.assertEqual(self.scene["palette"]["Head"]["hex"], "#E8EEF3")
+        names = [o["name"] for o in self.scene["objects"]]
+        self.assertIn("SUB_Thalamus", names)
+        self.assertIn("CTX_Occipital", names)
+        thal = [o for o in self.scene["objects"] if o["name"] == "SUB_Thalamus"][0]
+        self.assertEqual(thal["size_mm"], [35.0, 28.0, 25.0])
+        self.assertEqual(thal["collection"], "03_SUBCORTICAL")
+        self.assertTrue(self.scene["priority"].startswith("scene_spec.md >"))
+
+    def test_build_json_is_blender_build_compatible(self):
+        bj = scene_spec.to_build_json(self.scene)
+        # exactly the keys blender/build.py reads
+        for key in ("scene", "collections", "palette", "cameras", "views"):
+            self.assertIn(key, bj)
+        for cam in bj["cameras"]:
+            self.assertEqual(len(cam["pos"]), 3)
+            self.assertEqual(len(cam["target"]), 3)
+        for view in bj["views"]:
+            self.assertTrue(view["output"].endswith(".png"))
+        # blender/build.py's own loader must accept it unchanged
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as f:
+            f.write(scene_spec.canonical_json(bj))
+            path = f.name
+        try:
+            loaded = build.load_spec(path)
+            self.assertEqual(loaded["scene"], bj["scene"])
+            self.assertEqual(loaded["collections"], bj["collections"])
+        finally:
+            os.remove(path)
+
+    def test_hash_is_stable_across_parses(self):
+        a = scene_spec.compile_spec(self.text)["build_sha256"]
+        b = scene_spec.compile_spec(self.text)["build_sha256"]
+        self.assertEqual(a, b)
+
+    def test_hash_changes_when_spec_changes(self):
+        mutated = self.text.replace("#7EA6FF", "#7EA6FE")
+        self.assertNotEqual(scene_spec.compile_spec(mutated)["build_sha256"],
+                            scene_spec.compile_spec(self.text)["build_sha256"])
 
 
 if __name__ == "__main__":
