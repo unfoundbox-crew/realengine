@@ -9,7 +9,7 @@ Configuration (a LiteLLM proxy, or anything OpenAI-compatible):
 
     REALENGINE_LLM_BASE_URL   base URL, else LITELLM_BASE_URL   (required)
     REALENGINE_LLM_API_KEY    API key,  else LITELLM_MASTER_KEY (required)
-    REALENGINE_LLM_MODEL      model id, default claude-sonnet-5
+    REALENGINE_LLM_MODEL      model id, default claude-sonnet-4-6
 
 The proxy address is never hardcoded -- it lives on a private network and
 must come from the environment (Doppler:
@@ -28,7 +28,16 @@ import os
 import urllib.error
 import urllib.request
 
-DEFAULT_MODEL = "claude-sonnet-5"
+# 2026-09-12: claude-sonnet-5 and claude-fable-5 both 500 on this proxy
+# (Bedrock models not enabled there yet), and gemini-3.7-flash is out of
+# daily quota. claude-sonnet-4-6 is the id that actually completes here, so
+# it is the default -- but a live probe the same day showed its response
+# carrying "model": "openai/gpt-oss-120b" and a gpt-oss-style reasoning
+# field, i.e. this proxy currently serves claude-sonnet-4-6 requests via a
+# groq gpt-oss-120b fallback, not a real Claude backend. Keep it as the
+# default anyway (it is the name that won't 500), but don't read a 200 from
+# it as proof of a live Claude call -- re-probe when Bedrock is enabled.
+DEFAULT_MODEL = "claude-sonnet-4-6"
 CHEAP_MODEL = "gemini-3.7-flash"
 
 

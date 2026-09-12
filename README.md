@@ -97,8 +97,10 @@ doppler run --project unfoundbox --config dev_personal -- \
 ```
 Needs `REALENGINE_LLM_BASE_URL` (or `LITELLM_BASE_URL`) and
 `REALENGINE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`); model defaults to
-`claude-sonnet-5`, `REALENGINE_LLM_MODEL=gemini-3.7-flash` for a cheap
-draft. Missing either → a named error, no fallback. **Human Gate 1: read
+`claude-sonnet-4-6` (verified live on the proxy 2026-09-12; `claude-sonnet-5`
+and `claude-fable-5` 500 there today, Bedrock models not enabled),
+`REALENGINE_LLM_MODEL=gemini-3.7-flash` for a cheap draft when it's not out
+of quota. Missing either → a named error, no fallback. **Human Gate 1: read
 the spec.** Everything below is offline.
 
 ### 2. Spec → pinned build JSON
