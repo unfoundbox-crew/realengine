@@ -638,16 +638,41 @@ def to_build_json(scene):
     sizes_m = []
     for _i, obj in objects:
         sizes_m.append([max(_to_metres(d, "mm"), 0.001) for d in obj["size_mm"]])
-    cell = max([max(s) for s in sizes_m] or [0.05]) * 1.7
-    cols = max(1, int(math.ceil(math.sqrt(len(objects) or 1))))
-    rows = max(1, int(math.ceil((len(objects) or 1) / float(cols))))
+
+    # Packed grid: each column is as wide as its widest object and each row
+    # as deep as its deepest, so a 1.2 m bench next to a 60 mm bulb does not
+    # scatter everything across a giant field. Gap scales with the median
+    # object, not the largest.
+    count = len(objects) or 1
+    cols = max(1, int(math.ceil(math.sqrt(count))))
+    rows = max(1, int(math.ceil(count / float(cols))))
+    spread = sorted(max(s) for s in sizes_m) or [0.05]
+    gap = 0.45 * spread[len(spread) // 2]
+
+    col_w = [0.0] * cols
+    row_d = [0.0] * rows
+    for slot, size in enumerate(sizes_m):
+        r, c = divmod(slot, cols)
+        col_w[c] = max(col_w[c], size[0])
+        row_d[r] = max(row_d[r], size[1])
+
+    col_x, x_cursor = [], 0.0
+    for w in col_w:
+        col_x.append(x_cursor + w / 2.0)
+        x_cursor += w + gap
+    total_w = max(x_cursor - gap, 0.001)
+    col_x = [x - total_w / 2.0 for x in col_x]
+
+    row_y, y_cursor = [], 0.0
+    for d in row_d:
+        row_y.append(y_cursor + d / 2.0)
+        y_cursor += d + gap
+    total_d = max(y_cursor - gap, 0.001)
+    row_y = [total_d / 2.0 - y for y in row_y]
 
     placed = []
     for slot, ((_i, obj), size) in enumerate(zip(objects, sizes_m)):
         r, c = divmod(slot, cols)
-        x = _round((c - (cols - 1) / 2.0) * cell)
-        y = _round(((rows - 1) / 2.0 - r) * cell)
-        z = _round(size[2] / 2.0)
         pal = _palette_for(obj, scene)
         placed.append({
             "name": obj["name"],
@@ -656,14 +681,14 @@ def to_build_json(scene):
             "hex": pal[1]["hex"],
             "alpha": pal[1]["alpha"],
             "roughness": pal[1]["roughness"],
-            "pos": [x, y, z],
+            "pos": [_round(col_x[c]), _round(row_y[r]), _round(size[2] / 2.0)],
             "size_m": [_round(s) for s in size],
             "label": obj["label"],
             "subtitle": obj["subtitle"],
         })
 
-    half_x = (cols * cell) / 2.0 or 0.5
-    half_y = (rows * cell) / 2.0 or 0.5
+    half_x = total_w / 2.0 or 0.5
+    half_y = total_d / 2.0 or 0.5
     half_z = (max([s[2] for s in sizes_m] or [0.1])) or 0.1
     extent = [_round(half_x), _round(half_y), _round(max(half_z, 0.05))]
     center = [0.0, 0.0, _round(half_z / 2.0)]
