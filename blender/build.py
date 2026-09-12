@@ -1,8 +1,18 @@
 """code-to-3d Blender entrypoint: spec -> .blend + QA PNGs.
 
-Build order: collections -> materials -> cameras -> save .blend -> views.
+Build order: collections -> materials -> blockout -> cameras -> save .blend
+-> views.
 
-Import-safe without Blender: ``bpy`` is imported only inside ``main``.
+The spec is the build JSON that ``spec/scene_spec.py`` derives from
+SCENE_SPEC.md -- the same file the web backend reads.
+
+Headless invocation (Blender puts its own flags in sys.argv, so everything
+after a bare ``--`` belongs to this script)::
+
+    blender --background --python blender/build.py -- \
+        --spec out/build.json --out-dir out/blender --views CAM_Master
+
+Import-safe without Blender: ``bpy`` is imported only inside ``build``.
 ``python3 -c "import build"`` must pass on a machine with no bpy.
 """
 from __future__ import annotations
@@ -11,6 +21,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+# Blender runs this file by path, so its own directory is not on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Pure-python helper safe to import anywhere. Everything else is lazy.
 from ctd_blender.materials import hex_to_linear  # noqa: F401  (re-export check)
@@ -60,6 +73,7 @@ def build(args):
     from ctd_blender.collections import ensure_collection_tree
     from ctd_blender.materials import build_material_table
     from ctd_blender.cameras import aim_cameras
+    from ctd_blender.lighting import setup_world, three_point
     from ctd_blender.qa import collect_stats, render_view
 
     spec = load_spec(args.spec)
@@ -69,10 +83,30 @@ def build(args):
     scene_name = spec.get("scene", "CTD_SCENE")
     scene = bpy.data.scenes.new(scene_name)
     scene.unit_settings.system = "METRIC"
+    engine = args.engine or (spec.get("render") or {}).get("engine")
+    if engine:
+        # Engine ids drift between Blender versions (5.2 has BLENDER_EEVEE,
+        # 4.x had BLENDER_EEVEE_NEXT). Try the alias before giving up.
+        for candidate in (engine, engine.replace("_NEXT", ""), engine + "_NEXT"):
+            try:
+                scene.render.engine = candidate
+                break
+            except TypeError:
+                continue
+        else:
+            print("CTD unknown engine: %s (left %s)"
+                  % (engine, scene.render.engine), file=sys.stderr)
 
     cols = ensure_collection_tree(
         scene, spec.get("collections", DEFAULT_COLLECTIONS))
-    build_material_table(spec.get("palette", DEFAULT_PALETTE))
+    mats = build_material_table(spec.get("palette", DEFAULT_PALETTE))
+    if spec.get("objects"):
+        from ctd_blender.blockout import build_blockout
+        build_blockout(spec["objects"], cols, mats, scene=scene)
+    render_cfg = spec.get("render") or {}
+    setup_world(scene, render_cfg.get("background", "#F8FAFC"))
+    three_point(scene, spec.get("extent", (1.0, 1.0, 1.0)),
+                spec.get("center", (0.0, 0.0, 0.0)), cols)
     cams = aim_cameras(spec.get("cameras", DEFAULT_CAMERAS), cols)
 
     blend_path = out_dir / (spec.get("blend_name", scene_name) + ".blend")
@@ -82,18 +116,22 @@ def build(args):
     if isinstance(views, list) and views and isinstance(views[0], dict):
         # Views given as full render specs in the JSON spec.
         for view in views:
+            scale = args.res_scale
             render_view(out_dir / view["output"], view["camera"],
                         scene=scene,
-                        res_x=view.get("res_x", 1600),
-                        res_y=view.get("res_y", 1600),
-                        samples=view.get("samples"))
+                        res_x=max(64, int(view.get("res_x", 1600) * scale)),
+                        res_y=max(64, int(view.get("res_y", 1600) * scale)),
+                        samples=args.samples or view.get("samples"))
     else:
         for name in [v for v in views if v]:
             cam = cams.get(name) or bpy.data.objects.get(name)
             if cam is None:
                 print("CTD unknown view: %s" % name, file=sys.stderr)
                 continue
-            render_view(out_dir / ("%s.png" % name), cam, scene=scene)
+            render_view(out_dir / ("%s.png" % name), cam, scene=scene,
+                        res_x=max(64, int(1600 * args.res_scale)),
+                        res_y=max(64, int(1600 * args.res_scale)),
+                        samples=args.samples)
 
     print("CTD_BUILD_DONE", json.dumps(collect_stats(scene)))
     return 0
@@ -108,7 +146,21 @@ def parse_args(argv=None):
                    help="Directory for .blend + QA PNGs.")
     p.add_argument("--views", default="",
                    help="Comma-separated camera names to render.")
+    p.add_argument("--engine", default=None,
+                   help="Render engine override, e.g. BLENDER_EEVEE_NEXT.")
+    p.add_argument("--samples", type=int, default=None,
+                   help="Render samples override (small = fast QA frames).")
+    p.add_argument("--res-scale", type=float, default=1.0,
+                   help="Scale every view's resolution (0.1 = tiny proof).")
+    if argv is None:
+        argv = script_argv()
     return p.parse_args(argv)
+
+
+def script_argv(argv=None):
+    """Our own args: everything after a bare ``--`` when Blender ran us."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    return argv[argv.index("--") + 1:] if "--" in argv else argv
 
 
 def main(argv=None):
