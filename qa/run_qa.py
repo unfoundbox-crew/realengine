@@ -9,6 +9,9 @@ Prints PASS/FAIL per file, exits 0 iff every PNG passes.
 ``--json`` prints one machine-readable receipt on stdout instead (this is
 what the MCP ``qa_assert`` tool consumes); human lines then go to stderr.
 ``--baseline DIR`` additionally runs ``views_match`` against that directory.
+``--build build.json`` additionally runs ``no_overlap`` over that build's named
+objects -- it needs no PNGs and no OCR, so it is the one assert that still
+works when there is no browser on the machine.
 
 Engine note (measured 2026-09-12 on the brain blockout renders): tesseract
 is the portable default and misses some correctly-drawn labels; on macOS
@@ -23,7 +26,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asserts
-from asserts import labels_present, views_match
+from asserts import labels_present, no_overlap, views_match
 
 
 def main(argv=None):
@@ -34,6 +37,8 @@ def main(argv=None):
                     help="OCR engine passed to zero-vision (default: %s)" % asserts.OCR_ENGINE)
     ap.add_argument("--baseline", default=None,
                     help="second renders dir to dimension-compare against")
+    ap.add_argument("--build", default=None,
+                    help="build.json to run the no_overlap gate over")
     ap.add_argument("--json", action="store_true",
                     help="print a JSON receipt on stdout (human lines to stderr)")
     args = ap.parse_args(argv)
@@ -44,7 +49,8 @@ def main(argv=None):
 
     labels = [s.strip() for s in args.labels.split(",") if s.strip()]
     receipt = {"ok": False, "renders_dir": args.renders, "labels": labels,
-               "engine": asserts.OCR_ENGINE, "files": [], "views_match": None}
+               "engine": asserts.OCR_ENGINE, "files": [], "views_match": None,
+               "no_overlap": None}
 
     def bail(msg, code=2):
         receipt["error"] = msg
@@ -92,6 +98,18 @@ def main(argv=None):
             print("FAIL views_match: %s" % ", ".join(mismatched), file=out)
         else:
             print("PASS views_match (%d file(s))" % len(rows), file=out)
+
+    if args.build:
+        overlap = no_overlap(args.build)
+        receipt["no_overlap"] = overlap
+        if overlap["ok"]:
+            print("PASS no_overlap (%d pair(s), tolerance %g m)"
+                  % (overlap["checked"], overlap["tolerance_m"]), file=out)
+        else:
+            all_pass = False
+            detail = overlap["reason"] or ", ".join(
+                "%s/%s" % (p["a"], p["b"]) for p in overlap["pairs"])
+            print("FAIL no_overlap: %s" % detail, file=out)
 
     receipt["ok"] = all_pass
     print("RESULT: %s" % ("PASS" if all_pass else "FAIL"), file=out)

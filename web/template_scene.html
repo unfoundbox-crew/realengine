@@ -199,10 +199,44 @@ for (const name of SCENE_DATA.collections) {
   groups.set(name, g);
   scene.add(g);
 }
+// Part kinds come from spec/geometry.py in normal form: local position, a
+// quaternion, and numbers. Every axial primitive is authored along +Z (the
+// spec's up axis); three.js builds them along +Y, so those geometries are
+// rotated once at construction and the part's own quaternion applies on top.
+// An object with no `geometry` block is a blockout box -- the old path,
+// byte-identical for every spec written before geometry existed.
+function partGeometry(part) {
+  const seg = part.segments || 32;
+  switch (part.kind) {
+    case "box":
+      return new THREE.BoxGeometry(part.size[0], part.size[1], part.size[2], 2, 2, 2);
+    case "sphere":
+      return new THREE.SphereGeometry(part.radius, seg, part.rings || 16);
+    case "torus":
+      // three.js TorusGeometry already lies in the XY plane: no rotation.
+      return new THREE.TorusGeometry(part.radius, part.tube, part.tube_segments || 16, seg);
+    case "cylinder":
+    case "cone":
+      return new THREE.CylinderGeometry(part.radius_top, part.radius_bottom,
+                                        part.height, seg, 1).rotateX(Math.PI / 2);
+    case "lathe":
+      return new THREE.LatheGeometry(
+        part.profile.map((p) => new THREE.Vector2(p[0], p[1])), seg
+      ).rotateX(Math.PI / 2);
+    case "extrude": {
+      const shape = new THREE.Shape(
+        part.outline.map((p) => new THREE.Vector2(p[0], p[1]))
+      );
+      return new THREE.ExtrudeGeometry(shape, { depth: part.depth, bevelEnabled: false });
+    }
+    default:
+      throw new Error("unknown geometry part kind: " + part.kind);
+  }
+}
+
 const labelTargets = [];
 for (const obj of SCENE_DATA.objects) {
   const [w, d, h] = obj.size_m;
-  const geo = new THREE.BoxGeometry(w, d, h, 2, 2, 2);
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(obj.hex),
     roughness: obj.roughness,
@@ -211,16 +245,31 @@ for (const obj of SCENE_DATA.objects) {
     opacity: obj.alpha,
     depthWrite: obj.alpha >= 1,
   });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.name = obj.name;
-  mesh.position.set(obj.pos[0], obj.pos[1], obj.pos[2]);
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geo, 25),
-    new THREE.LineBasicMaterial({ color: 0x2a3138, transparent: true, opacity: 0.35 })
-  );
-  mesh.add(edges);
-  (groups.get(obj.collection) || scene).add(mesh);
-  labelTargets.push({ obj, mesh, top: obj.pos[2] + h / 2 });
+  const geometry = obj.geometry || null;
+  const parts = geometry ? geometry.parts : [{ kind: "box", size: [w, d, h], pos: [0, 0, 0] }];
+  const holder = new THREE.Group();
+  holder.name = obj.name;
+  holder.position.set(obj.pos[0], obj.pos[1], obj.pos[2]);
+  for (const part of parts) {
+    const geo = partGeometry(part);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(part.pos[0], part.pos[1], part.pos[2]);
+    if (part.quat) {
+      mesh.quaternion.set(part.quat[0], part.quat[1], part.quat[2], part.quat[3]);
+    }
+    if (part.kind === "box") {
+      // Blockout boxes read better with their silhouette drawn; a lathed
+      // shade does not -- edge lines on a smooth solid are just noise.
+      mesh.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo, 25),
+        new THREE.LineBasicMaterial({ color: 0x2a3138, transparent: true, opacity: 0.35 })
+      ));
+    }
+    holder.add(mesh);
+  }
+  (groups.get(obj.collection) || scene).add(holder);
+  const localTop = geometry && geometry.aabb ? geometry.aabb[1][2] : h / 2;
+  labelTargets.push({ obj, mesh: holder, top: obj.pos[2] + localTop });
 }
 
 // ------------------------------------------------------------------ cameras

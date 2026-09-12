@@ -40,8 +40,13 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import geometry as geometry_mod  # noqa: E402
 
 SPEC_MODULE_VERSION = "0.2.0"
 
@@ -358,6 +363,32 @@ def _best_label(suffix, labels):
     return best
 
 
+def _parse_geometry(sections):
+    """Optional ``## Geometry`` section: a fenced JSON object, name -> block.
+
+    JSON, not bullets, because a lathe profile and a jointed arm are nested
+    data and prose would be a worse contract than the thing it replaces. The
+    section is OPTIONAL and additive: a spec without it parses exactly as it
+    did before this feature existed, down to the byte, which is why the
+    ``geometry`` key is absent rather than empty when nothing is declared.
+
+    See ``spec/geometry.py`` for the primitive vocabulary and SPEC.md for the
+    normative documentation.
+    """
+    body = find_section(sections, r"^\s*geometry\b")
+    blocks = fences(body)
+    if not blocks:
+        return {}
+    try:
+        parsed = json.loads(blocks[0])
+    except ValueError as e:
+        raise ValueError("## Geometry: the fenced block is not valid JSON (%s)" % e)
+    if not isinstance(parsed, dict):
+        raise ValueError("## Geometry: expected an object mapping object name "
+                         "to a geometry block, got %s" % type(parsed).__name__)
+    return parsed
+
+
 def _parse_cameras(sections):
     body = find_section(sections, r"cameras?")
     out = []
@@ -433,6 +464,7 @@ def parse_spec(text):
     title = _parse_title(text, sections)
     collections = _parse_collections(sections)
     labels = _parse_labels(sections)
+    geom = _parse_geometry(sections)
     scene = {
         "spec_module_version": SPEC_MODULE_VERSION,
         "title": title,
@@ -447,6 +479,10 @@ def parse_spec(text):
         "priority": _parse_priority(text),
         "render": _parse_render(sections),
     }
+    if geom:
+        # Absent, not empty: a spec that declares no geometry must produce the
+        # same bytes it produced before geometry existed.
+        scene["geometry"] = geom
     return scene
 
 
@@ -518,6 +554,18 @@ def emit_spec(scene):
         w("- %s: `%s mm`" % (obj["name"],
                              " × ".join(_fmt(d) for d in obj["size_mm"])))
     w("")
+    if scene.get("geometry"):
+        w("## Geometry")
+        w("")
+        w("Modelled geometry per object; every object omitted here falls back to"
+          " the blockout box.")
+        w("")
+        w("```json")
+        for line in json.dumps(scene["geometry"], sort_keys=True, indent=2,
+                               ensure_ascii=False).splitlines():
+            w(line)
+        w("```")
+        w("")
     w("## Cameras")
     w("")
     for cam in scene["cameras"]:
@@ -670,11 +718,12 @@ def to_build_json(scene):
     total_d = max(y_cursor - gap, 0.001)
     row_y = [total_d / 2.0 - y for y in row_y]
 
+    geom_blocks = scene.get("geometry") or {}
     placed = []
     for slot, ((_i, obj), size) in enumerate(zip(objects, sizes_m)):
         r, c = divmod(slot, cols)
         pal = _palette_for(obj, scene)
-        placed.append({
+        entry = {
             "name": obj["name"],
             "collection": obj["collection"],
             "palette": pal[0],
@@ -685,7 +734,14 @@ def to_build_json(scene):
             "size_m": [_round(s) for s in size],
             "label": obj["label"],
             "subtitle": obj["subtitle"],
-        })
+        }
+        if geom_blocks:
+            # All-or-nothing per scene: once one object is modelled every
+            # object carries its source, so build.json never leaves a reader
+            # guessing which boxes are real geometry and which are proxies.
+            entry["geometry"] = geometry_mod.compile_object_geometry(
+                geom_blocks.get(obj["name"]), entry["size_m"])
+        placed.append(entry)
 
     half_x = total_w / 2.0 or 0.5
     half_y = total_d / 2.0 or 0.5

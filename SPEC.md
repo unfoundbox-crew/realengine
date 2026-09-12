@@ -20,9 +20,10 @@ License: Apache 2.0. Name: `intent3d` shortlist pending — tree stays
 
 ```
 spec/     SPEC-SCHEMA.md + validate.py + scene_spec.py (md<->json round trip)
-          + llm.py (the one model call) + compile_brief.py (prompt->spec)
-blender/  ctd_blender lib (collections, materials, blockout, lighting,
-          cameras, qa) + build.py + run_headless.py
+          + geometry.py (geometry block -> primitive parts) + llm.py
+          (the one model call) + compile_brief.py (prompt->spec)
+blender/  ctd_blender lib (collections, materials, blockout, primitives,
+          lighting, cameras, qa) + build.py + run_headless.py
 web/      template_scene.html (generic) + template.html + presets/*.json
           + build_web.py (slots) + build_scene.py (spec->scene) + render_views.py
 qa/       asserts.py + run_qa.py (zero-vision subprocess, --json receipts)
@@ -39,12 +40,23 @@ docs/     ARCHITECTURE.md, ROADMAP.md, TECH-DESIGN.md, AUDIENCE.md,
 
 - Spec schema: `spec/SPEC-SCHEMA.md`. Validator MUST pass on every spec.
   Palette lives in `## Palette`. Cameras ≥1. Build steps gapless.
+- Geometry: `## Geometry` is optional and additive — a spec without it
+  builds byte-identical to before the section existed. `spec/geometry.py`
+  compiles it to a flat list of primitive parts (box/cylinder/cone/sphere/
+  torus/lathe/extrude, plus `group`/`arm` composites that compile away). Z
+  up, axial primitives along +Z, nothing ever rescaled to fit the declared
+  size — a mismatch over 1mm is a warning, not a silent resize. An object
+  with no block gets a labelled blockout box (`source: "blockout"` in
+  `build.json`); see `spec/SPEC-SCHEMA.md` for the full vocabulary.
 - Blender lib: no `bpy` import at module top (import-safe without Blender);
   all paths/params are arguments (grep `/Users/` MUST be empty).
 - Web: every scene string is a `{{slot}}`; `build_web.py` fails loud on
   unbound slots or surviving `{{...}}`; geometry stays code, copy stays slots.
 - QA: `run_qa.py --renders DIR --labels CSV`, exit 0 iff all pass. Run on
   full-res masters only (small-preview OCR garble is a known trap).
+  `no_overlap` (`qa/asserts.py`) is real: part-wise AABB intersection
+  between named objects, tolerance read from the spec's own placement-
+  tolerance prose.
 - MCP tools (exact 6): `brief, spec_compile, build, views, qa_assert,
   export_scene`. Each runs a Python step and returns its JSON receipt; a
   step whose dependency is missing returns `ok:false` naming it. No silent

@@ -56,12 +56,63 @@ GLOW_Bulb
 
 ## Object dimensions
 
+Every dimension is the object's axis-aligned bounding box. For an object with
+modelled geometry the box is the bound of that geometry, not an invented
+envelope -- `spec/geometry.py` warns if the two disagree by more than 1 mm.
+
 - BNCH_Top: `1200 × 600 × 40 mm`
 - LAMP_Base: `180 × 180 × 30 mm`
-- LAMP_LowerArm: `40 × 40 × 260 mm`
-- LAMP_UpperArm: `36 × 36 × 220 mm`
+- LAMP_LowerArm: `55.8 × 36 × 264.3 mm`
+- LAMP_UpperArm: `48.9 × 32 × 224 mm`
 - LAMP_Shade: `140 × 140 × 120 mm`
 - GLOW_Bulb: `60 × 60 × 60 mm`
+
+## Geometry
+
+Modelled geometry per object, in the object's own local frame, metres, Z up.
+`BNCH_Top` is deliberately absent: a bench slab *is* a box, so it takes the
+blockout fallback and `build.json` labels it `source: blockout`. The other five
+are modelled -- a turned base, two jointed arms, a lathed shade, a spherical
+bulb -- which is the whole point of the block.
+
+```json
+{
+  "GLOW_Bulb": {
+    "kind": "sphere",
+    "radius": 0.03,
+    "segments": 32,
+    "rings": 16
+  },
+  "LAMP_Base": {
+    "kind": "group",
+    "parts": [
+      { "kind": "cylinder", "radius": 0.09, "height": 0.022, "pos": [0, 0, -0.004], "segments": 48 },
+      { "kind": "torus", "radius": 0.07, "tube": 0.008, "pos": [0, 0, 0.007], "segments": 48, "tube_segments": 16 }
+    ]
+  },
+  "LAMP_LowerArm": {
+    "kind": "arm",
+    "joints": [[-0.012, 0, -0.13], [0.012, 0, 0.0], [-0.004, 0, 0.13]],
+    "radius": 0.014,
+    "joint_radius": 0.018,
+    "caps": false,
+    "segments": 20
+  },
+  "LAMP_Shade": {
+    "kind": "lathe",
+    "profile": [[0.012, -0.06], [0.016, -0.055], [0.068, 0.05], [0.07, 0.055], [0.07, 0.06]],
+    "segments": 48
+  },
+  "LAMP_UpperArm": {
+    "kind": "arm",
+    "joints": [[0.0, 0, -0.11], [0.02, 0, 0.02], [0.006, 0, 0.11]],
+    "radius": 0.013,
+    "joint_radius": 0.016,
+    "caps": false,
+    "segments": 20
+  }
+}
+```
 
 ## Cameras
 

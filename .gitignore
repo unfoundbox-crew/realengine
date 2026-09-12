@@ -25,3 +25,8 @@ build/
 # brief store (spec/compile_brief.py)
 .realengine/
 out/
+
+# CI scratch
+out_views/
+out_ci*/
+out_ci*.html
