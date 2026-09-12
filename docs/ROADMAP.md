@@ -1,7 +1,7 @@
 ---
 title: RealEngine Roadmap
 product: realengine
-version: 1.0.0
+version: 2.0.0
 status: living
 updated: 2026-09-12
 horizon: 2026-Q4
@@ -9,16 +9,16 @@ horizon: 2026-Q4
 
 ## Now (this week)
 
-- [ ] Wire the MCP `build` and `views` tools to `blender/build.py` and `web/build_web.py` — why it matters: every doc (README, SPEC.md, TECH-DESIGN.md, index.html) presents the MCP server as the primary agent surface, but all 6 tools currently fail closed — done when: `build` with `backend: "web"` produces a real `.html` file and returns its path, not an error.
-- [ ] Wire `qa_assert` to `qa/run_qa.py` — why it matters: it's the only tool that closes the "machine checks before the human eye" loop the whole pitch rests on — done when: calling `qa_assert` with a renders dir and label list returns real pass/fail, not a stub error.
-- [ ] Add a CI step that runs `qa/run_qa.py` against a fixture render (or explicitly document why it can't) — why it matters: the QA loop is currently untested by CI; a regression there would ship silently — done when: `gh run list` shows a green CI run that includes an OCR/QA step, or `docs/ARCHITECTURE.md`'s known-gaps entry is updated to explain the blocker.
+- [ ] Implement `qa/asserts.no_overlap` (still `NotImplementedError`, algorithm sketched in its docstring) — why it matters: SPEC.md done-gate #2 needs the QA loop to catch an injected label overlap unaided, and the built page's label overlay demonstrably collides in dense views — done when: a test injects an overlapping pair and `no_overlap` fails it with both names and the overlap area.
+- [ ] Prove `brief` against the live proxy — why it matters: only the stubbed and fail-closed paths have run; `LITELLM_BASE_URL` is not in the Doppler config, so nobody has seen a real draft — done when: one `brief` call with the proxy configured produces a spec that passes `check_spec` first try, and the model id used is recorded here.
+- [ ] Re-render the Blender backend now that it has lights — why it matters: the one proven headless frame came out black because the scene had no lights; the rig landed after it — done when: a `.blend` + a non-black PNG come out of `blender/run_headless.py` and the receipt is pasted into this file.
 
 ## Next (this month)
 
-- [ ] Build the prompt→spec compiler named in SPEC.md's tree contract (`spec/` — currently only `validate.py` + `SPEC-SCHEMA.md` exist) — why it matters: BUILD-PLAN.md calls Phase B "load-bearing — everything composes if it's right," and half of B (the compiler) doesn't exist — done when: a `spec_compile` MCP call or CLI script turns a recorded brief into a `SCENE_SPEC.md` that passes `validate.py`.
-- [ ] Decide and implement how `SCENE_SPEC.md` (Markdown) becomes the JSON that `build.py`/`build_web.py` actually consume — why it matters: today the schema calls `SCENE_SPEC.md` "the only artifact both read," but no code reads it into a build — done when: one command turns a validated `SCENE_SPEC.md` into the JSON preset/spec both builders accept, with a round-trip test in `tests/test_all.py`.
-- [ ] Implement `qa/asserts.no_overlap` (currently `NotImplementedError`, with the algorithm already sketched in its docstring) — why it matters: SPEC.md's done-gate #2 requires the QA loop to "catch an injected label overlap unaided," and it can't yet — done when: a test injects an overlapping label pair and `no_overlap` fails it without human review.
-- [ ] Document (or build) the headless-Blender invocation for `build.py` — why it matters: no wrapper script or CI step runs it; nobody outside this session's author has proven it actually renders — done when: a `blender --background --python ...` command is in the repo (README quickstart or a script) and produces a `.blend` + PNGs from `examples/brain`.
+- [ ] Decide whether the blockout is the product or a stage — why it matters: both backends currently render boxes at the spec's dimensions, and the README now says so; a spec that describes a cone gets a box — done when: either a shape vocabulary (`box`/`cylinder`/`sphere`/`cone` per object) is in `spec/SPEC-SCHEMA.md` and both backends honour it, or a decision doc says the blockout is deliberate.
+- [ ] Label placement that survives dense views — why it matters: `CAM_FrontOrthographic` and `CAM_Detail` fail the OCR gate on both examples because labels stack or fall outside the crop, and that is the pipeline's own output failing its own gate — done when: every view of both examples passes `qa_assert` with the default engine.
+- [ ] Make the OCR engine choice honest across platforms — why it matters: measured on these renders, the portable default (tesseract) misses labels `apple-vision` reads cleanly, so the gate's verdict depends on the machine — done when: the default is documented per platform in README and `qa/asserts.py`, or the frames are rendered legibly enough for tesseract.
+- [ ] Vendor or inline three.js — why it matters: the "standalone" page needs network on first open, so a headless render on an offline box fails — done when: a built page renders with the network off, or the docs stop calling it self-contained.
 
 ## Later (this quarter)
 
@@ -36,6 +36,12 @@ horizon: 2026-Q4
 
 | Date | Item | Commit/PR |
 |---|---|---|
+| 2026-09-12 | `SCENE_SPEC.md` ⇄ build JSON round trip, pinned by sha256, with golden and fixpoint tests | 7e2090d |
+| 2026-09-12 | Real Three.js backend (`web/build_scene.py` + generic template), headless view renderer, QA `--json` receipts, deterministic scene zip | 75542df |
+| 2026-09-12 | Prompt→spec compiler (`spec/compile_brief.py`, `spec/llm.py`) and a Blender backend that builds blockout + lights, plus the headless argv convention | 29e6b62 |
+| 2026-09-12 | All six MCP tools doing real work, schemas matching handlers, hermetic transport test | 90d56ef |
+| 2026-09-12 | Compiler and web-backend tests; CI round-trip and deterministic-scene-build steps | d319240 |
+| 2026-09-12 | Packed blockout layout and `examples/desk-lamp`, a second non-brain example | 7321fc3 |
 | 2026-09-11 (unverified date, from `git log`) | Audit fixes, unified `tests/test_all.py`, GitHub Pages portal (`index.html`, `tracker.html`) | a96785c |
 
 ## Decision log
@@ -44,4 +50,7 @@ horizon: 2026-Q4
 |---|---|---|---|
 | 2026-09 (TECH-DESIGN.md, undated within doc) | Ride Blender + Three.js only; integrate Unity/Unreal/Houdini at file-format border (FBX/glTF/USD); route around seat-licensed API-less DCCs | Building/competing head-on with heavyweight DCC editors | `docs/BACKENDS.md`, `TECH-DESIGN.md` section 5c |
 | 2026-09 (TECH-DESIGN.md 5b) | Sell outcomes (spec in, verified scene out) via a tiny ~6-verb MCP surface, not a large tool zoo like other Blender MCP servers | Exposing raw bpy/GL verbs (the "86 tools" pattern named in 5b) | `TECH-DESIGN.md` section 5b |
+| 2026-09-12 | One model call only, at `brief`; everything after the spec is code, offline, and hash-pinned | A model in the build loop; per-backend prompting | `spec/llm.py`, `spec/compile_brief.py` |
+| 2026-09-12 | Backends render a blockout from what the spec states, and invent nothing about the subject | Filling gaps with plausible geometry | `docs/ARCHITECTURE.md` Purpose |
+| 2026-09-12 | Optional dependencies (Blender, headless browser, model endpoint) fail closed by name and are never simulated | A "demo mode" that fakes renders | `mcp/src/handlers.ts` |
 | 2026-09 (SPEC.md section 1) | Tree stays named `code-to-3d` until a rename to `intent3d` (shortlisted, not decided) lands | Renaming immediately | `SPEC.md` section 1 |

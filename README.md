@@ -17,7 +17,7 @@ Prompt → pinned spec → deterministic 3D on two backends (Blender & Three.js)
 **RealEngine inverts this:**
 1. **Spec is King**: Human intent compiles into a human-readable, machine-checked contract (`SCENE_SPEC.md`).
 2. **Deterministic Backends**: The same spec compiles to native Blender `.blend` files (procedural materials, modifier stacks, aimed cameras) and self-contained Three.js WebGL scenes.
-3. **Machine QA Loop**: Zero-Vision reads render pixels as text (checking label legibility, camera envelopes, and overlap) *before* asking the human eye to judge taste.
+3. **Machine QA Loop**: Zero-Vision reads render pixels as text (label legibility) *before* asking the human eye to judge taste. Overlap detection is still a stub — see [what works](#what-works-today).
 
 ---
 
@@ -51,41 +51,98 @@ Cross-cutting principles:
 
 ---
 
+## What works today
+
+Honest status, verified on this commit. "Blockout" means one named proxy
+volume per named object in the spec, at its stated size, in its palette
+colour, labelled, under the spec's own cameras — the builder renders what
+the spec says and invents nothing.
+
+| MCP tool | State | Needs |
+|---|---|---|
+| `brief` | Real. Drafts a `SCENE_SPEC.md`, rejects it unless the validator passes and it parses complete, retries once with the failures fed back | An OpenAI-compatible base URL + key in the environment; fails closed by name without them |
+| `spec_compile` | Real. Spec → pinned build JSON + both hashes | Nothing. Offline, deterministic |
+| `build` (`web`) | Real. Standalone Three.js page + `build.json` + `views.json` | Nothing to build. The page pulls three.js from a CDN on first open |
+| `build` (`blender`) | Real. `.blend` + PNGs via headless Blender | A Blender binary (`REALENGINE_BLENDER`, PATH, or the macOS bundle) |
+| `views` | Real. PNGs of every named camera | Headless Chromium via Playwright. Without it: no PNGs, exit 3, and the `?view=` URLs any browser can drive |
+| `qa_assert` | Real. OCR label gate (+ optional `views_match`) | Rendered PNGs and zero-vision. `no_overlap` is still a stub |
+| `export_scene` | Real. Deterministic zip with a sha256 manifest, or one html/png | Nothing |
+
+Known gaps, stated plainly: `qa/asserts.no_overlap` raises
+`NotImplementedError`; the Blender backend builds a blockout, not modelled
+geometry; CI runs neither the browser nor the OCR gate (no browser and no
+zero-vision in that image), so both are local steps.
+
 ## Packages
 
 | Dir | Package | In | Out |
 |---|---|---|---|
-| `spec/` | Spec schema + validator (`validate.py`) | markdown / words | `SCENE_SPEC.md` (valid) |
-| `blender/` | `ctd_blender` bpy library + `build.py` | spec | `.blend` + QA PNGs |
-| `web/` | Three.js template + preset JSON + `build_web.py` | spec preset | self-contained HTML + snapshot |
-| `qa/` | `asserts.py` + `run_qa.py` (zero-vision OCR) | renders dir | pass / fail + missing labels |
-| `mcp/` | Model Context Protocol TypeScript server (6 tools) | MCP call | structured result |
-| `tests/` | Unified test suite (`test_all.py`) | — | test receipts |
+| `spec/` | Schema + `validate.py` + `scene_spec.py` (md ⇄ JSON) + `compile_brief.py` (prompt → spec) + `llm.py` | words or `SCENE_SPEC.md` | valid spec, build JSON, `build_sha256` |
+| `blender/` | `ctd_blender` bpy library + `build.py` + `run_headless.py` | build JSON | `.blend` + QA PNGs |
+| `web/` | `build_scene.py` + `template_scene.html` + `render_views.py` (plus the legacy slot builder `build_web.py`) | spec or build JSON | standalone HTML + `views.json` + PNGs |
+| `qa/` | `asserts.py` + `run_qa.py` (zero-vision OCR, `--json` receipts) | renders dir | pass / fail + missing labels |
+| `tools/` | `export_scene.py` | scene dir | deterministic zip + sha256 manifest |
+| `mcp/` | Model Context Protocol TypeScript server (6 tools) | MCP call | the step's JSON receipt |
+| `tests/` | `test_all.py` + `golden/` (pinned JSON, emitted md, hashes) | — | test receipts |
 
 ---
 
 ## Quickstart
 
-### 1. Validate a Scene Spec
+### 1. Words → spec (the only step that calls a model)
 ```bash
-python3 spec/validate.py examples/brain/SCENE_SPEC.md
+# base URL and key come from the environment; nothing is hardcoded
+doppler run --project unfoundbox --config dev_personal -- \
+  python3 spec/compile_brief.py brief --prompt "a jointed desk lamp on a workbench"
+```
+Needs `REALENGINE_LLM_BASE_URL` (or `LITELLM_BASE_URL`) and
+`REALENGINE_LLM_API_KEY` (or `LITELLM_MASTER_KEY`); model defaults to
+`claude-sonnet-5`, `REALENGINE_LLM_MODEL=gemini-3.7-flash` for a cheap
+draft. Missing either → a named error, no fallback. **Human Gate 1: read
+the spec.** Everything below is offline.
+
+### 2. Spec → pinned build JSON
+```bash
+python3 spec/scene_spec.py hash examples/desk-lamp/SCENE_SPEC.md
+python3 spec/compile_brief.py compile --spec examples/desk-lamp/SCENE_SPEC.md --out-dir out/lamp
 ```
 
-### 2. Build Web 3D Scene (Deterministic)
+### 3. Build a scene
 ```bash
-python3 web/build_web.py web/presets/brain.json web/template.html web/build/brain.html
-open web/build/brain.html
+# web: a standalone page + build.json + views.json
+python3 web/build_scene.py examples/desk-lamp/SCENE_SPEC.md --out-dir out/lamp
+open out/lamp/scene.html
+
+# blender: .blend + PNGs, needs Blender installed
+python3 blender/run_headless.py --spec out/lamp/build.json --out-dir out/lamp/blender
 ```
 
-### 3. Run the Machine QA Gate
+### 4. Render QA views, then gate them
 ```bash
-python3 qa/run_qa.py --renders examples/brain --labels "Thalamus,Hippocampus,Amygdala"
+python3 web/render_views.py --scene-dir out/lamp          # needs headless Chromium
+python3 qa/run_qa.py --renders out/lamp/renders \
+  --labels "Base,LowerArm,UpperArm,Shade,Bulb" --engine apple-vision
+```
+No browser? `views.json` carries a `?view=CAM_Name&hud=0` URL and a target
+resolution per camera, and the page sets `window.REALENGINE_READY` when the
+frame is settled — drive it with any browser you like.
+
+### 5. Ship it
+```bash
+python3 tools/export_scene.py --scene-dir out/lamp
 ```
 
-### 4. Run the Full Test Suite
+### 6. Run the full test suite
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'
-cd mcp && npm test
+cd mcp && npm ci && npm run build && npm test
+```
+
+### Using it as an MCP server
+```jsonc
+{ "command": "node", "args": ["mcp/dist/index.js"],
+  "env": { "REALENGINE_ROOT": "/path/to/realengine",
+           "REALENGINE_PYTHON": "python3" } }
 ```
 
 ---
