@@ -98,12 +98,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr
 
-      # Best-effort only: qa/run_qa.py shells out to zero-vision's `zrv ocr`,
-      # an unpinned npm package that may not resolve on the runner. tesseract
-      # is the only OCR engine this Linux runner can use -- apple-vision is
-      # macOS-only and never runs in CI. The hard gate is the non-black pixel
-      # assert above; if this step is red, look at it, but it never blocks
-      # the job. A skipped/failed run must still show red here, never green.
+      # Best-effort, and RED TODAY ON PURPOSE. Measured on the first run of
+      # this job (2026-09-12): zero-vision + tesseract do resolve and do read
+      # the frames -- they read some labels and miss others on all four views
+      # (CAM_Master misses Base, UpperArm, Top). That is a real legibility
+      # miss, not a broken engine: the labels are small and occluded at these
+      # camera framings. Fixing label placement is its own job, so this step
+      # is non-blocking until then, and it shows red the whole time rather
+      # than being deleted or quietly passed.
+      #
+      # tesseract is the only OCR engine a Linux runner can use. apple-vision
+      # reads the same frames cleanly and ~5x faster but is macOS-only, so it
+      # can never run here -- see the engine note in qa/run_qa.py.
+      #
+      # The hard gate is the non-black pixel assert above, which does block.
       - name: Label legibility gate (OCR, best-effort)
         continue-on-error: true
         run: >
