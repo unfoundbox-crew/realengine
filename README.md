@@ -100,3 +100,8 @@ cd mcp && npm test
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Living docs
+
+Architecture and roadmap: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`. Rendered page: https://claude.ai/code/artifact/74ed6218-f9fc-4921-97aa-9484c359d69c
+Rebuild: `python3 docs/site/build.py --arch docs/ARCHITECTURE.md --roadmap docs/ROADMAP.md --out docs/site/index.html --product-name RealEngine --repo-url https://github.com/unfoundbox-crew/realengine`
