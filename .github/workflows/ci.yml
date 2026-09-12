@@ -31,6 +31,18 @@ jobs:
           python web/build_web.py web/presets/brain.json web/template.html out_ci.html
           diff -u web/examples/brain-v2.html out_ci.html
 
+      - name: Spec round trip + deterministic scene build
+        run: |
+          python spec/scene_spec.py roundtrip examples/brain/SCENE_SPEC.md
+          python web/build_scene.py examples/brain/SCENE_SPEC.md --out-dir out_ci_scene_a
+          python web/build_scene.py examples/brain/SCENE_SPEC.md --out-dir out_ci_scene_b
+          diff -u out_ci_scene_a/scene.html out_ci_scene_b/scene.html
+          diff -u out_ci_scene_a/build.json out_ci_scene_b/build.json
+
+      # The OCR gate (qa/run_qa.py) is NOT run here on purpose: it needs a
+      # headless browser for the frames and zero-vision for the OCR, neither
+      # of which is in this image. mcp/test/tools.test.js covers the qa_assert
+      # plumbing with a no-PNG input; the pixel gate stays a local/manual step.
       - name: Node MCP build & test
         run: |
           cd mcp

@@ -25,7 +25,9 @@ sys.path.insert(0, str(REPO_ROOT / "blender"))
 
 import validate
 import scene_spec
+import compile_brief
 import build_web
+import build_scene
 from asserts import png_size, views_match, no_overlap
 import build
 from ctd_blender.materials import hex_to_linear
@@ -245,6 +247,85 @@ class TestSceneSpecRoundTrip(unittest.TestCase):
         mutated = self.text.replace("#7EA6FF", "#7EA6FE")
         self.assertNotEqual(scene_spec.compile_spec(mutated)["build_sha256"],
                             scene_spec.compile_spec(self.text)["build_sha256"])
+
+
+class TestBriefCompiler(unittest.TestCase):
+    """The prompt->spec compiler: stubbed drafting, strict checks, offline compile."""
+
+    def test_check_spec_accepts_the_golden_spec(self):
+        text = (GOLDEN / "brain.emitted.md").read_text(encoding="utf-8")
+        self.assertEqual(compile_brief.check_spec(text), [])
+
+    def test_check_spec_rejects_an_incomplete_spec(self):
+        problems = compile_brief.check_spec("# Nothing\n\n## Units\nmetric\n")
+        self.assertTrue(problems)
+        self.assertTrue(any("camera" in p or "validate.py" in p for p in problems))
+
+    def test_strip_fence_unwraps_a_fenced_document(self):
+        self.assertEqual(compile_brief.strip_fence("```markdown\n# Hi\n```"), "# Hi\n")
+        self.assertEqual(compile_brief.strip_fence("# Hi"), "# Hi\n")
+
+    def test_brief_id_is_deterministic_and_input_sensitive(self):
+        a = compile_brief.brief_id_for("a robot arm", [])
+        self.assertEqual(a, compile_brief.brief_id_for("a robot arm", []))
+        self.assertNotEqual(a, compile_brief.brief_id_for("a robot arm", ["ref"]))
+
+    def test_brief_fails_closed_without_a_configured_model(self):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("REALENGINE_LLM_BASE_URL", "LITELLM_BASE_URL",
+                            "REALENGINE_LLM_API_KEY", "LITELLM_MASTER_KEY",
+                            "REALENGINE_LLM_STUB")}
+        with self.assertRaises(Exception) as cm:
+            compile_brief.draft("a robot arm", env=env)
+        self.assertIn("REALENGINE_LLM_BASE_URL", str(cm.exception))
+
+    def test_brief_with_a_stub_produces_the_pinned_spec(self):
+        pinned = json.loads((GOLDEN / "brain.hashes.json").read_text(encoding="utf-8"))
+        env = dict(os.environ)
+        env["REALENGINE_LLM_STUB"] = str(GOLDEN / "brain.emitted.md")
+        text, meta, tried = compile_brief.draft("brain scene", env=env)
+        self.assertEqual(meta["source"], "stub")
+        self.assertEqual(len(tried), 1)
+        self.assertEqual(scene_spec.compile_spec(text)["build_sha256"],
+                         pinned["build_sha256"])
+
+
+class TestWebSceneBackend(unittest.TestCase):
+    """The Three.js backend: real page, no unbound slots, deterministic."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_build_scene_writes_a_complete_scene(self):
+        receipt = build_scene.build_scene(str(BRAIN_SPEC), self.tmp)
+        self.assertTrue(receipt["ok"])
+        for key in ("html", "build_json", "views_json", "spec_md"):
+            self.assertTrue(Path(receipt[key]).exists(), key)
+        html = Path(receipt["html"]).read_text(encoding="utf-8")
+        self.assertNotIn("{{", html)
+        self.assertNotIn("}}", html)
+        self.assertIn("CAM_Master", html)
+        self.assertIn("Thalamus", html)
+        self.assertIn(receipt["build_sha256"], html)
+
+    def test_views_manifest_is_drivable_by_any_browser(self):
+        receipt = build_scene.build_scene(str(BRAIN_SPEC), self.tmp)
+        manifest = json.loads(Path(receipt["views_json"]).read_text(encoding="utf-8"))
+        self.assertEqual(len(manifest["views"]), len(receipt["cameras"]))
+        for row in manifest["views"]:
+            self.assertTrue(row["url"].startswith("scene.html?view=CAM_"))
+            self.assertIn("hud=0", row["url"])
+            self.assertGreater(row["res_x"], 0)
+        self.assertIn("Thalamus", manifest["labels"])
+
+    def test_build_is_byte_identical_on_a_second_run(self):
+        a = build_scene.build_scene(str(BRAIN_SPEC), os.path.join(self.tmp, "a"))
+        b = build_scene.build_scene(str(BRAIN_SPEC), os.path.join(self.tmp, "b"))
+        self.assertEqual(Path(a["html"]).read_bytes(), Path(b["html"]).read_bytes())
+        self.assertEqual(a["build_sha256"], b["build_sha256"])
 
 
 if __name__ == "__main__":
