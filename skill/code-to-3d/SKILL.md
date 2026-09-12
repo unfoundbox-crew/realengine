@@ -20,16 +20,27 @@ determinism; humans own taste. The spec is the only artifact both read.
 3. **Clarifying questions** — one round, plain options, then proceed.
 4. **Present options** — 2–3 directions (scope/fidelity/style) with
    token cost each. Human picks one.
-5. **Write spec** — emit `SCENE_SPEC.md` per `spec/SPEC-SCHEMA.md`;
-   run `python3 spec/validate.py` until PASS.
+5. **Write spec** — MCP `brief` drafts `SCENE_SPEC.md` and checks it,
+   or write it by hand per `spec/SPEC-SCHEMA.md`. Either way
+   `python3 spec/validate.py` must PASS. This is the last step that
+   touches a model.
 6. **Human Gate 1** — spec approval. Last readable checkpoint. No
    build without it.
-7. **Build** — `build.py` (Blender: `.blend` + QA PNGs) and web
-   template (Three.js HTML + snapshot PNG). Seeded, deterministic.
-8. **QA** — machine checks only: `qa/` asserts (legible, match,
-   no-overlap) read renders as text via zero-vision. Fix, rebuild.
-9. **Human Gate 2 (eye)** — show master render; approve or one-line
-   correction, then rebuild. The only un-automatable step.
+7. **Compile** — MCP `spec_compile` (or
+   `python3 spec/compile_brief.py compile --spec …`) pins the spec to
+   `build.json` + `build_sha256`. Offline from here on.
+8. **Build** — MCP `build` with backend `web` (standalone Three.js page
+   + `views.json`) and/or `blender` (`.blend` + PNGs, needs Blender).
+   Same build JSON, both backends.
+9. **Views** — MCP `views` renders each named camera. No headless
+   browser? `views.json` gives a `?view=…&hud=0` URL and a resolution
+   per camera; capture once `window.REALENGINE_READY` is true.
+10. **QA** — MCP `qa_assert`: OCR label gate over the renders dir
+    (`no_overlap` is still a stub — overlap is eye-only). Fix, rebuild.
+11. **Human Gate 2 (eye)** — show the master render; approve or take a
+    one-line correction, then rebuild. The only un-automatable step.
+12. **Ship** — MCP `export_scene` (zip: page + JSON + spec + manifest
+    + renders, with sha256s).
 
 ## Rules
 
@@ -38,9 +49,14 @@ determinism; humans own taste. The spec is the only artifact both read.
   `references/RANK.md`).
 - No random placement; no invented labels, regions, or claims.
 - Small files only — every line earns context-window rent.
+- A tool that returns `ok:false` with a `requirement` is telling you a
+  dependency is missing (Blender, headless Chromium, a model endpoint).
+  Report it; never work around it with a fake result.
+- The backends draw a blockout: one named volume per named object, at
+  the spec's dimensions. They do not model shapes the spec doesn't state.
 
 ## Consumes
 
 | Input | Output |
 |---|---|
-| words + refs | valid `SCENE_SPEC.md` → `.blend` + `.html` + QA PNGs |
+| words + refs | valid `SCENE_SPEC.md` → `build.json` (hash-pinned) → `.html` + `.blend` + QA PNGs → `scene.zip` |
